@@ -6,8 +6,9 @@ This document is the official API specification for the Mobile App Engineering T
 
 ## 1. Base Conventions
 
-- **Base URL (Local / Staging):** `http://localhost:8080/api/v1`
-- **Protocol:** HTTP REST (JSON body)
+- **Production Base URL:** `https://api.truelineapp.in/api/v1`
+- **Development Base URL:** `http://localhost:8080/api/v1`
+- **Protocol:** HTTPS REST (JSON body)
 - **Authentication Header:** `Authorization: Bearer <JWT_TOKEN>`
 - **Standard Response Format:**
 ```json
@@ -133,7 +134,7 @@ Fetch active listeners matching the app UI layout (Name, Title tag, Profile Phot
 - **Query Parameters:**
   - `language` (Optional): Filter by language chip (e.g. `Hindi`, `Bhojpuri`, `Bengali`, `Tamil`, `Urdu`, `English`) or `All`.
   - `search` (Optional): Search listener by name.
-- **Example Request:** `GET /api/v1/partners?language=Hindi&search=Afreen`
+- **Example Request:** `GET https://api.truelineapp.in/api/v1/partners?language=Hindi&search=Afreen`
 - **Response (200 OK):**
 ```json
 {
@@ -226,7 +227,7 @@ Fetches message history for a specific listener chat room. **Automatically marks
       "id": "d1a2b3c4-5678-901a-bcde-f11111111111",
       "user_id": "11111111-1111-1111-1111-111111111111",
       "partner_id": "a0000000-0000-0000-0000-000000000001",
-      "sender_type": "user", // "user" or "partner"
+      "sender_type": "user",
       "content": "Namaste Afreen! Are you free to talk today?",
       "read_at": "2026-08-11T19:00:00Z",
       "created_at": "2026-08-11T18:45:00Z"

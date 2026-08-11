@@ -1,8 +1,8 @@
 # TrueLine Backend — API Updates & Mobile App Integration Guide
 
-**Document Version:** 1.1 (User App Release)  
-**Target Audience:** Mobile App Development Team (Android + iOS)  
-**Base Server URL:** `http://localhost:8080/api/v1`
+**Document Version:** 1.2 (Production Target)  
+**Production API Base URL:** `https://api.truelineapp.in/api/v1`  
+**Development API Base URL:** `http://localhost:8080/api/v1`
 
 ---
 
@@ -79,7 +79,6 @@ Authorization: Bearer <JWT_TOKEN>
   }
 }
 ```
-> **App Action:** Store `token` securely in device Keychain / EncryptedSharedPreferences.
 
 ---
 
@@ -99,7 +98,7 @@ Authorization: Bearer <JWT_TOKEN>
       "language_pref": "hi",
       "status": "active"
     },
-    "balance": 260.00 // Populate the top-right header coin pill (🪙 260)
+    "balance": 260.00
   }
 }
 ```
@@ -115,9 +114,9 @@ Authorization: Bearer <JWT_TOKEN>
   - `language` (Optional): `All`, `Hindi`, `Bhojpuri`, `Bengali`, `Tamil`, `Urdu`, `English`
   - `search` (Optional): Query text typed in top search bar (e.g. `Afreen`)
 - **Example Requests:**
-  - All Listeners: `GET /api/v1/partners`
-  - Hindi Listeners: `GET /api/v1/partners?language=Hindi`
-  - Search Name: `GET /api/v1/partners?search=Ahmedi`
+  - All Listeners: `GET https://api.truelineapp.in/api/v1/partners`
+  - Hindi Listeners: `GET https://api.truelineapp.in/api/v1/partners?language=Hindi`
+  - Search Name: `GET https://api.truelineapp.in/api/v1/partners?search=Ahmedi`
 
 - **Response Payload (200 OK):**
 ```json
@@ -135,7 +134,7 @@ Authorization: Bearer <JWT_TOKEN>
       "rate_per_min": 11.00,
       "rating_avg": 4.50,
       "rating_count": 38,
-      "availability": "online", // Show green ONLINE badge when "online"
+      "availability": "online",
       "is_favourite": true
     },
     {
@@ -161,8 +160,6 @@ Authorization: Bearer <JWT_TOKEN>
 ## 💬 4. 1-on-1 Chat System Integration
 
 ### 4.1 Chat Tab (List All Conversations Screen)
-Populates the bottom-navigation Chat Tab listing all active chats.
-
 - **Endpoint:** `GET /api/v1/chats`
 - **Auth:** `Bearer <USER_JWT_TOKEN>`
 - **Response (200 OK):**
@@ -180,107 +177,45 @@ Populates the bottom-navigation Chat Tab listing all active chats.
       "last_message_sender": "partner",
       "last_message_time": "2026-08-11T20:15:00Z",
       "unread_count": 0
-    },
-    {
-      "partner_id": "a0000000-0000-0000-0000-000000000002",
-      "partner_name": "Ahmedi",
-      "partner_title": "Calm Friend",
-      "partner_photo_url": "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=400&q=80",
-      "partner_availability": "online",
-      "last_message": "Hello! Hope you had a peaceful day.",
-      "last_message_sender": "partner",
-      "last_message_time": "2026-08-11T20:00:00Z",
-      "unread_count": 1
     }
   ]
 }
 ```
 
 ### 4.2 1-on-1 Chat Room (Message History)
-Fetches messages inside a specific listener's chat room. Automatically marks unread messages from the partner as read.
-
 - **Endpoint:** `GET /api/v1/chats/{partner_id}/messages`
 - **Auth:** `Bearer <USER_JWT_TOKEN>`
-- **Query Params:** `limit` (default 50), `offset` (default 0)
-- **Response (200 OK):**
-```json
-{
-  "success": true,
-  "data": [
-    {
-      "id": "d1a2b3c4-5678-901a-bcde-f11111111111",
-      "user_id": "11111111-1111-1111-1111-111111111111",
-      "partner_id": "a0000000-0000-0000-0000-000000000001",
-      "sender_type": "user", // "user" (bubble right) or "partner" (bubble left)
-      "content": "Namaste Afreen! Are you free to talk today?",
-      "read_at": "2026-08-11T19:00:00Z",
-      "created_at": "2026-08-11T18:45:00Z"
-    },
-    {
-      "id": "d2b3c4d5-6789-012a-bcde-f22222222222",
-      "user_id": "11111111-1111-1111-1111-111111111111",
-      "partner_id": "a0000000-0000-0000-0000-000000000001",
-      "sender_type": "partner",
-      "content": "Haan bilkul! Feel free to call anytime.",
-      "read_at": "2026-08-11T19:05:00Z",
-      "created_at": "2026-08-11T19:00:00Z"
-    }
-  ]
-}
-```
 
 ### 4.3 Send Message in 1-on-1 Chat Room
-Send a text message to a listener.
-
 - **Endpoint:** `POST /api/v1/chats/{partner_id}/messages`
 - **Auth:** `Bearer <USER_JWT_TOKEN>`
-- **Request Body:**
-```json
-{
-  "content": "Hello Afreen, I am starting the call now!"
-}
-```
-- **Response (200 OK):** Returns created `ChatMessage` object.
 
 ---
 
-## 🛠️ 5. Quick Testing cURL Commands
-
-Run backend server:
-```bash
-go run cmd/server/main.go
-```
+## 🛠️ 5. Quick Production cURL Commands
 
 1. **Request OTP:**
    ```bash
-   curl -X POST http://localhost:8080/api/v1/auth/otp/request \
+   curl -X POST https://api.truelineapp.in/api/v1/auth/otp/request \
      -H "Content-Type: application/json" \
      -d '{"phone": "+919876543210", "role": "user"}'
    ```
 
 2. **Verify OTP & Get Token:**
    ```bash
-   curl -X POST http://localhost:8080/api/v1/auth/otp/verify \
+   curl -X POST https://api.truelineapp.in/api/v1/auth/otp/verify \
      -H "Content-Type: application/json" \
      -d '{"phone": "+919876543210", "otp": "123456", "role": "user"}'
    ```
 
-3. **Get Home Screen Partners:**
+3. **Get Home Screen Active Listeners:**
    ```bash
-   curl http://localhost:8080/api/v1/partners \
+   curl https://api.truelineapp.in/api/v1/partners \
      -H "Authorization: Bearer <TOKEN_FROM_STEP_2>"
    ```
 
-4. **Get Chat Conversations List:**
+4. **Get Chat Conversations:**
    ```bash
-   curl http://localhost:8080/api/v1/chats \
+   curl https://api.truelineapp.in/api/v1/chats \
      -H "Authorization: Bearer <TOKEN_FROM_STEP_2>"
-   ```
-
-5. **Send Chat Message:**
-   ```bash
-   curl -X POST http://localhost:8080/api/v1/chats/a0000000-0000-0000-0000-000000000001/messages \
-     -H "Authorization: Bearer <TOKEN_FROM_STEP_2>" \
-     -H "Content-Type: application/json" \
-     -d '{"content": "Hello Afreen!"}'
    ```
