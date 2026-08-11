@@ -1,0 +1,22 @@
+# render.yaml Infrastructure as Code for Render.com
+services:
+  - type: web
+    name: trueline-backend
+    env: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    region: singapore # Render's closest region to India
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: ENV
+        value: "production"
+      - key: OTP_MOCK_MODE
+        value: "true"
+      - key: OTP_PROVIDER
+        value: "mock"
+      - key: DATABASE_URL
+        sync: false # Set in Render Dashboard -> Environment
+      - key: JWT_SECRET
+        sync: false # Set in Render Dashboard -> Environment
+    healthCheckPath: /healthz

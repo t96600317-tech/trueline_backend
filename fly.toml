@@ -1,0 +1,34 @@
+# fly.toml app configuration file for Fly.io
+# Refer to https://fly.io/docs/reference/configuration/ for details.
+
+app = "trueline-backend"
+primary_region = "bom" # Mumbai, India region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  ENV = "production"
+  OTP_MOCK_MODE = "true"
+  OTP_PROVIDER = "mock"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+[[http_service.checks]]
+  grace_period = "10s"
+  interval = "15s"
+  method = "GET"
+  path = "/healthz"
+  timeout = "2s"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1
