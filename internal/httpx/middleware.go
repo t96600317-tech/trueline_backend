@@ -1,11 +1,59 @@
 package httpx
 
 import (
+	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"trueline-backend/internal/auth"
 )
+
+// LoggingResponseWriter captures the HTTP status code
+type LoggingResponseWriter struct {
+	http.ResponseWriter
+	StatusCode int
+}
+
+func (lrw *LoggingResponseWriter) WriteHeader(code int) {
+	lrw.StatusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
+// RequestLoggerMiddleware logs every incoming HTTP request with timing and status code
+func RequestLoggerMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		lrw := &LoggingResponseWriter{ResponseWriter: w, StatusCode: http.StatusOK}
+
+		next.ServeHTTP(lrw, r)
+
+		duration := time.Since(start)
+		log.Printf("[HTTP] %d | %-6s %s | %v | Client: %s",
+			lrw.StatusCode,
+			r.Method,
+			r.URL.Path,
+			duration.Round(time.Millisecond),
+			r.RemoteAddr,
+		)
+	})
+}
+
+func CORSMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, x-webhook-signature, x-webhook-timestamp")
+		w.Header().Set("Access-Control-Max-Age", "86400")
+
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
 
 func AuthMiddleware(tm *auth.TokenManager) Middleware {
 	return func(next http.HandlerFunc) http.HandlerFunc {
@@ -44,7 +92,12 @@ func RequireRole(role string) Middleware {
 				return
 			}
 
-			if claims.Role != role && claims.Role != "admin" && claims.Role != "superadmin" {
+			allowed := claims.Role == role || claims.Role == "admin" || claims.Role == "superadmin"
+			if (role == "listener" || role == "partner") && (claims.Role == "listener" || claims.Role == "partner" || claims.Role == "user") {
+				allowed = true
+			}
+
+			if !allowed {
 				Error(w, http.StatusForbidden, "FORBIDDEN", "You do not have permission to access this resource")
 				return
 			}

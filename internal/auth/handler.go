@@ -3,6 +3,7 @@ package auth
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 type AuthHandler struct {
@@ -15,13 +16,13 @@ func NewAuthHandler(service *AuthService) *AuthHandler {
 
 type OTPRequestPayload struct {
 	Phone string `json:"phone"`
-	Role  string `json:"role"` // "user" or "partner"
+	Role  string `json:"role"` // "user" or "listener"
 }
 
 type OTPVerifyPayload struct {
 	Phone string `json:"phone"`
 	OTP   string `json:"otp"`
-	Role  string `json:"role"` // "user" or "partner"
+	Role  string `json:"role"` // "user" or "listener"
 }
 
 type response struct {
@@ -68,6 +69,10 @@ func (h *AuthHandler) RequestOTP(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.RequestOTP(r.Context(), req.Phone, req.Role)
 	if err != nil {
+		if strings.Contains(err.Error(), "PHONE_BLOCKED") {
+			writeError(w, http.StatusForbidden, "PHONE_BLOCKED", "This phone number has been permanently blocked from accessing TrueLine.")
+			return
+		}
 		writeError(w, http.StatusBadRequest, "OTP_REQUEST_FAILED", err.Error())
 		return
 	}
@@ -93,6 +98,10 @@ func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.service.VerifyOTP(r.Context(), req.Phone, req.OTP, req.Role)
 	if err != nil {
+		if strings.Contains(err.Error(), "PHONE_BLOCKED") {
+			writeError(w, http.StatusForbidden, "PHONE_BLOCKED", "This phone number has been permanently blocked from accessing TrueLine.")
+			return
+		}
 		writeError(w, http.StatusUnauthorized, "OTP_VERIFICATION_FAILED", err.Error())
 		return
 	}

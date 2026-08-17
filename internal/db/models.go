@@ -7,30 +7,32 @@ import (
 )
 
 type User struct {
-	ID           uuid.UUID `json:"id"`
-	Phone        string    `json:"phone"`
-	LanguagePref string    `json:"language_pref"`
-	Status       string    `json:"status"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID             uuid.UUID `json:"id"`
+	PhoneHash      string    `json:"-"`
+	EncryptedPhone string    `json:"-"`
+	LanguagePref   string    `json:"language_pref"`
+	Status         string    `json:"status"` // active, blocked
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
-type Partner struct {
+type Listener struct {
 	ID                   uuid.UUID  `json:"id"`
-	Phone                string     `json:"phone"`
 	Name                 string     `json:"name"`
-	Title                string     `json:"title"`            // e.g. "Joy Helper", "Calm Friend"
+	Title                string     `json:"title"`
 	PhotoURL             string     `json:"photo_url"`
-	AudioSampleURL       string     `json:"audio_sample_url"` // Voice intro preview
+	AudioSampleURL       string     `json:"audio_sample_url"`
 	Bio                  string     `json:"bio"`
 	Languages            []string   `json:"languages"`
-	RatePerMin           float64    `json:"rate_per_min"`
+	RatePerMinMicros     int64      `json:"rate_per_min_micros"`
+	EarningPerMinMicros  int64      `json:"earning_per_min_micros"`
 	RatingAvg            float64    `json:"rating_avg"`
 	RatingCount          int        `json:"rating_count"`
-	KYCStatus            string     `json:"kyc_status"`       // pending, approved, rejected
-	Status               string     `json:"status"`           // active, blocked
-	Availability         string     `json:"availability"`     // online, offline
-	IsFavourite          bool       `json:"is_favourite"`     // Dynamic flag for user Discover screen
+	OnboardingStep       string     `json:"onboarding_step"`
+	KYCStatus            string     `json:"kyc_status"`   // pending, approved, rejected
+	Status               string     `json:"status"`       // active, blocked
+	Availability         string     `json:"availability"` // online, offline
+	IsFavourite          bool       `json:"is_favourite"`
 	CurrentCallSessionID *uuid.UUID `json:"current_call_session_id,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
@@ -45,78 +47,69 @@ type Admin struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-type KYCDocument struct {
-	ID              uuid.UUID  `json:"id"`
-	PartnerID       uuid.UUID  `json:"partner_id"`
-	DocumentType    string     `json:"document_type"`
-	DocumentURL     string     `json:"document_url"`
-	ReviewStatus    string     `json:"review_status"`
-	RejectionReason *string    `json:"rejection_reason,omitempty"`
-	ReviewedBy      *uuid.UUID `json:"reviewed_by,omitempty"`
-	ReviewedAt      *time.Time `json:"reviewed_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-}
-
-type OTPRequest struct {
-	ID        uuid.UUID `json:"id"`
-	Phone     string    `json:"phone"`
-	OTPCode   string    `json:"-"`
-	Role      string    `json:"role"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Verified  bool      `json:"verified"`
-	CreatedAt time.Time `json:"created_at"`
-}
-
 type Wallet struct {
-	ID        uuid.UUID `json:"id"`
-	UserID    uuid.UUID `json:"user_id"`
-	Balance   float64   `json:"balance"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            uuid.UUID `json:"id"`
+	UserID        uuid.UUID `json:"user_id"`
+	BalanceMicros int64      `json:"balance_micros"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
-type WalletTransaction struct {
-	ID             uuid.UUID `json:"id"`
-	WalletID       uuid.UUID `json:"wallet_id"`
-	Type           string    `json:"type"`
-	Amount         float64   `json:"amount"`
-	BalanceAfter   float64   `json:"balance_after"`
-	ReferenceID    string    `json:"reference_id"`
-	IdempotencyKey string    `json:"idempotency_key"`
-	Description    string    `json:"description"`
-	CreatedAt      time.Time `json:"created_at"`
+type WalletLedgerEntry struct {
+	ID                 uuid.UUID `json:"id"`
+	WalletID           uuid.UUID `json:"wallet_id"`
+	Type               string    `json:"type"`
+	AmountMicros       int64      `json:"amount_micros"`
+	BalanceAfterMicros int64      `json:"balance_after_micros"`
+	ReferenceID        string    `json:"reference_id"`
+	IdempotencyKey     string    `json:"idempotency_key"`
+	Description        string    `json:"description"`
+	CreatedAt          time.Time `json:"created_at"`
+}
+
+type EarningsLedgerEntry struct {
+	ID                 uuid.UUID `json:"id"`
+	ListenerID         uuid.UUID `json:"listener_id"`
+	Type               string    `json:"type"`
+	AmountMicros       int64      `json:"amount_micros"`
+	BalanceAfterMicros int64      `json:"balance_after_micros"`
+	ReferenceID        string    `json:"reference_id"`
+	IdempotencyKey     string    `json:"idempotency_key"`
+	TaxInfo            any       `json:"tax_info"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type CallSession struct {
-	ID                 uuid.UUID  `json:"id"`
-	UserID             uuid.UUID  `json:"user_id"`
-	PartnerID          uuid.UUID  `json:"partner_id"`
-	Provider           string     `json:"provider"`
-	RoomID             string     `json:"room_id"`
-	ZegoTokenRef       string     `json:"zego_token_ref"`
-	Status             string     `json:"status"`
-	StartedAt          *time.Time `json:"started_at,omitempty"`
-	EndedAt            *time.Time `json:"ended_at,omitempty"`
-	EndReason          *string    `json:"end_reason,omitempty"`
-	RatePerMinSnapshot float64    `json:"rate_per_min_snapshot"`
-	CreatedAt          time.Time  `json:"created_at"`
+	ID                          uuid.UUID  `json:"id"`
+	UserID                      uuid.UUID  `json:"user_id"`
+	ListenerID                  uuid.UUID  `json:"listener_id"`
+	Provider                    string     `json:"provider"`
+	RoomID                      string     `json:"room_id"`
+	Status                      string     `json:"status"`
+	StartedAt                   *time.Time `json:"started_at,omitempty"`
+	EndedAt                     *time.Time `json:"ended_at,omitempty"`
+	EndReason                   *string    `json:"end_reason,omitempty"`
+	RatePerMinMicrosSnapshot    int64      `json:"rate_per_min_micros_snapshot"`
+	EarningPerMinMicrosSnapshot int64      `json:"earning_per_min_micros_snapshot"`
+	CreatedAt                   time.Time  `json:"created_at"`
 }
 
 type ChatMessage struct {
-	ID         uuid.UUID  `json:"id"`
-	UserID     uuid.UUID  `json:"user_id"`
-	PartnerID  uuid.UUID  `json:"partner_id"`
-	SenderType string     `json:"sender_type"` // "user" or "partner"
-	Content    string     `json:"content"`
-	ReadAt     *time.Time `json:"read_at,omitempty"`
-	CreatedAt  time.Time  `json:"created_at"`
+	ID               uuid.UUID  `json:"id"`
+	UserID           uuid.UUID  `json:"user_id"`
+	ListenerID       uuid.UUID  `json:"listener_id"`
+	SenderType       string     `json:"sender_type"` // "user" or "listener"
+	Content          string     `json:"content"`
+	ModerationStatus string     `json:"moderation_status"`
+	ReadAt           *time.Time `json:"read_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
 }
 
 type ConversationSummary struct {
-	PartnerID         uuid.UUID `json:"partner_id"`
-	PartnerName       string    `json:"partner_name"`
-	PartnerTitle      string    `json:"partner_title"`
-	PartnerPhotoURL   string    `json:"partner_photo_url"`
-	PartnerAvailability string  `json:"partner_availability"` // "online" or "offline"
+	ListenerID         uuid.UUID `json:"listener_id"`
+	ListenerName       string    `json:"listener_name"`
+	ListenerTitle      string    `json:"listener_title"`
+	ListenerPhotoURL   string    `json:"listener_photo_url"`
+	ListenerAvailability string  `json:"listener_availability"`
 	LastMessage       string    `json:"last_message"`
 	LastMessageSender string    `json:"last_message_sender"`
 	LastMessageTime   time.Time `json:"last_message_time"`

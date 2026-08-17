@@ -3,7 +3,6 @@ package chat
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"trueline-backend/internal/auth"
 
@@ -51,7 +50,7 @@ func (h *ChatHandler) ListConversations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	conversations, err := h.service.ListUserConversations(r.Context(), claims.UserID)
+	conversations, err := h.service.ListConversations(r.Context(), claims.UserID, claims.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "CHAT_LIST_FAILED", err.Error())
 		return
@@ -67,19 +66,25 @@ func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	partnerIDStr := r.PathValue("partner_id")
-	partnerID, err := uuid.Parse(partnerIDStr)
+	targetIDStr := r.PathValue("id")
+	targetID, err := uuid.Parse(targetIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_PARTNER_ID", "Partner ID must be a valid UUID")
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "Invalid target ID")
 		return
 	}
 
-	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	var userID, listenerID uuid.UUID
+	if claims.Role == "user" {
+		userID = claims.UserID
+		listenerID = targetID
+	} else {
+		userID = targetID
+		listenerID = claims.UserID
+	}
 
-	messages, err := h.service.GetChatMessages(r.Context(), claims.UserID, partnerID, limit, offset)
+	messages, err := h.service.GetChatMessages(r.Context(), userID, listenerID, claims.Role)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "CHAT_MESSAGES_FAILED", err.Error())
+		writeError(w, http.StatusInternalServerError, "FETCH_MESSAGES_FAILED", err.Error())
 		return
 	}
 
@@ -93,10 +98,10 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	partnerIDStr := r.PathValue("partner_id")
-	partnerID, err := uuid.Parse(partnerIDStr)
+	targetIDStr := r.PathValue("id")
+	targetID, err := uuid.Parse(targetIDStr)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_PARTNER_ID", "Partner ID must be a valid UUID")
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "Invalid target ID")
 		return
 	}
 
@@ -106,33 +111,20 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	msg, err := h.service.SendMessage(r.Context(), claims.UserID, partnerID, req.Content)
+	var userID, listenerID uuid.UUID
+	if claims.Role == "user" {
+		userID = claims.UserID
+		listenerID = targetID
+	} else {
+		userID = targetID
+		listenerID = claims.UserID
+	}
+
+	msg, err := h.service.SendMessage(r.Context(), userID, listenerID, claims.Role, req.Content)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "SEND_MESSAGE_FAILED", err.Error())
+		writeError(w, http.StatusBadRequest, "SEND_FAILED", err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, msg)
-}
-
-func (h *ChatHandler) MarkRead(w http.ResponseWriter, r *http.Request) {
-	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok || claims == nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
-		return
-	}
-
-	partnerIDStr := r.PathValue("partner_id")
-	partnerID, err := uuid.Parse(partnerIDStr)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_PARTNER_ID", "Partner ID must be a valid UUID")
-		return
-	}
-
-	if err := h.service.MarkMessagesRead(r.Context(), claims.UserID, partnerID); err != nil {
-		writeError(w, http.StatusInternalServerError, "MARK_READ_FAILED", err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, map[string]string{"message": "Messages marked as read"})
+	writeJSON(w, http.StatusCreated, msg)
 }

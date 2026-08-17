@@ -1,44 +1,44 @@
--- name: InsertKYCDocument :one
-INSERT INTO kyc_documents (
-    partner_id, document_type, document_url, review_status
+-- name: CreateKYCRequest :one
+INSERT INTO kyc_requests (
+    listener_id, provider, provider_ref, document_type, status
 ) VALUES (
-    $1, $2, $3, 'pending'
+    $1, $2, $3, $4, 'pending'
 ) RETURNING *;
 
--- name: GetKYCDocumentsByPartnerID :many
-SELECT * FROM kyc_documents
-WHERE partner_id = $1
+-- name: GetKYCRequestsByListenerID :many
+SELECT * FROM kyc_requests
+WHERE listener_id = $1
 ORDER BY created_at DESC;
 
 -- name: ListPendingKYC :many
-SELECT k.*, p.name as partner_name, p.phone as partner_phone
-FROM kyc_documents k
-JOIN partners p ON k.partner_id = p.id
-WHERE k.review_status = 'pending'
+SELECT k.*, l.name as listener_name
+FROM kyc_requests k
+JOIN listeners l ON k.listener_id = l.id
+WHERE k.status = 'pending'
 ORDER BY k.created_at ASC;
 
--- name: ReviewKYCDocument :one
-UPDATE kyc_documents
-SET review_status = $2, rejection_reason = $3, reviewed_by = $4, reviewed_at = NOW()
+-- name: UpdateKYCRequestStatus :one
+UPDATE kyc_requests
+SET status = $2, verified_name = $3, verified_dob = $4, rejection_reason = $5, reviewed_by = $6, reviewed_at = NOW()
 WHERE id = $1
 RETURNING *;
 
 -- name: CreatePayoutRequest :one
 INSERT INTO payout_requests (
-    partner_id, amount_requested, tds_deducted, net_amount, status, upi_id
+    listener_id, amount_micros, tds_micros, net_amount_micros, status, upi_id
 ) VALUES (
     $1, $2, $3, $4, 'pending', $5
 ) RETURNING *;
 
--- name: ListPartnerPayouts :many
+-- name: ListListenerPayouts :many
 SELECT * FROM payout_requests
-WHERE partner_id = $1
+WHERE listener_id = $1
 ORDER BY requested_at DESC;
 
 -- name: ListPendingPayouts :many
-SELECT pr.*, p.name as partner_name, p.phone as partner_phone
+SELECT pr.*, l.name as listener_name
 FROM payout_requests pr
-JOIN partners p ON pr.partner_id = p.id
+JOIN listeners l ON pr.listener_id = l.id
 WHERE pr.status = 'pending'
 ORDER BY pr.requested_at ASC;
 
@@ -50,16 +50,16 @@ RETURNING *;
 
 -- name: AddRating :one
 INSERT INTO ratings (
-    call_session_id, user_id, partner_id, stars, review_text
+    call_session_id, user_id, listener_id, stars, review_text
 ) VALUES (
     $1, $2, $3, $4, $5
 ) RETURNING *;
 
--- name: UpdatePartnerAverageRating :exec
-UPDATE partners
+-- name: UpdateListenerAverageRating :exec
+UPDATE listeners
 SET rating_avg = (
-    SELECT COALESCE(AVG(stars), 0.00) FROM ratings WHERE partner_id = $1
+    SELECT COALESCE(AVG(stars), 0.00) FROM ratings WHERE ratings.listener_id = $1
 ), rating_count = (
-    SELECT COUNT(*) FROM ratings WHERE partner_id = $1
+    SELECT COUNT(*) FROM ratings WHERE ratings.listener_id = $1
 )
 WHERE id = $1;

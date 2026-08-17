@@ -6,7 +6,57 @@ import (
 	"log"
 	"time"
 
+	"trueline-backend/internal/db/generated"
+
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// Re-export generated Querier and New
+type Querier = db.Querier
+type Queries = db.Queries
+
+func New(d db.DBTX) *db.Queries {
+	return db.New(d)
+}
+
+// Re-export Model types from generated
+type UserGenerated = db.User
+type ListenerGenerated = db.Listener
+type WalletGenerated = db.Wallet
+type EarningsLedgerGenerated = db.EarningsLedger
+type WalletLedgerGenerated = db.WalletLedger
+type CallSessionGenerated = db.CallSession
+type ChatMessageGenerated = db.ChatMessage
+type KycRequestGenerated = db.KycRequest
+type PayoutRequestGenerated = db.PayoutRequest
+
+type ListPendingKYCRow = db.ListPendingKYCRow
+
+// Re-export Params types if needed
+type (
+	CreateOTPRequestParams             = db.CreateOTPRequestParams
+	GetLatestOTPParams                 = db.GetLatestOTPParams
+	CreateUserParams                   = db.CreateUserParams
+	UpdateUserLanguageParams           = db.UpdateUserLanguageParams
+	CreateListenerParams               = db.CreateListenerParams
+	UpdateListenerOnboardingStepParams = db.UpdateListenerOnboardingStepParams
+	UpdateListenerProfileParams        = db.UpdateListenerProfileParams
+	UpdateListenerKYCStatusParams      = db.UpdateListenerKYCStatusParams
+	UpdateListenerAvailabilityParams   = db.UpdateListenerAvailabilityParams
+	SetListenerCurrentCallSessionParams = db.SetListenerCurrentCallSessionParams
+	CreateWalletParams                 = db.CreateWalletParams
+	UpdateWalletBalanceParams          = db.UpdateWalletBalanceParams
+	InsertWalletLedgerEntryParams      = db.InsertWalletLedgerEntryParams
+	CreateCallSessionParams            = db.CreateCallSessionParams
+	UpdateCallSessionStatusParams      = db.UpdateCallSessionStatusParams
+	EndCallSessionParams               = db.EndCallSessionParams
+	InsertEarningsLedgerEntryParams    = db.InsertEarningsLedgerEntryParams
+	CreateKYCRequestParams             = db.CreateKYCRequestParams
+	UpdateKYCRequestStatusParams       = db.UpdateKYCRequestStatusParams
+	CreatePayoutRequestParams          = db.CreatePayoutRequestParams
+	ProcessPayoutRequestParams         = db.ProcessPayoutRequestParams
+	AddRatingParams                    = db.AddRatingParams
 )
 
 type Database struct {
@@ -19,7 +69,8 @@ func ConnectSupabaseDB(ctx context.Context, databaseURL string) (*Database, erro
 		return nil, fmt.Errorf("unable to parse database config: %w", err)
 	}
 
-	// Optimize pool settings for Supabase PgBouncer pooled connection
+	// Use simple query protocol (QueryExecModeExec) for PgBouncer / Supabase Transaction Mode compatibility
+	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
 	config.MaxConns = 25
 	config.MinConns = 5
 	config.MaxConnIdleTime = 15 * time.Minute
@@ -30,7 +81,6 @@ func ConnectSupabaseDB(ctx context.Context, databaseURL string) (*Database, erro
 		return nil, fmt.Errorf("unable to connect to database pool: %w", err)
 	}
 
-	// Verify connection with Ping
 	pingCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
@@ -48,3 +98,5 @@ func (d *Database) Close() {
 		d.Pool.Close()
 	}
 }
+
+type DBTX = db.DBTX

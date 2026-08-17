@@ -52,15 +52,18 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	u, balance, err := h.service.GetUserProfile(r.Context(), claims.UserID)
+	u, balanceMicros, err := h.service.GetUserProfile(r.Context(), claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
 		return
 	}
 
+	// Convert micros to coins for display
+	balanceCoins := float64(balanceMicros) / 1000000.0
+
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"user":    u,
-		"balance": balance,
+		"balance": balanceCoins,
 	})
 }
 
@@ -86,7 +89,7 @@ func (h *UserHandler) UpdateLanguage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, u)
 }
 
-func (h *UserHandler) DiscoverPartners(w http.ResponseWriter, r *http.Request) {
+func (h *UserHandler) DiscoverListeners(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok || claims == nil {
 		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
@@ -96,11 +99,45 @@ func (h *UserHandler) DiscoverPartners(w http.ResponseWriter, r *http.Request) {
 	langFilter := r.URL.Query().Get("language")
 	searchQuery := r.URL.Query().Get("search")
 
-	partners, err := h.service.ListDiscoverPartners(r.Context(), claims.UserID, langFilter, searchQuery)
+	listeners, err := h.service.ListDiscoverListeners(r.Context(), claims.UserID, langFilter, searchQuery)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "DISCOVER_FAILED", err.Error())
 		return
 	}
 
-	writeJSON(w, http.StatusOK, partners)
+	// Map RatePerMinMicros to coins for frontend compatibility
+	type ListenerResponse struct {
+		ID             string   `json:"id"`
+		Name           string   `json:"name"`
+		Title          string   `json:"title"`
+		PhotoUrl       string   `json:"photo_url"`
+		AudioSampleUrl string   `json:"audio_sample_url"`
+		Bio            string   `json:"bio"`
+		Languages      []string `json:"languages"`
+		RatePerMin     float64  `json:"rate_per_min"`
+		RatingAvg      float64  `json:"rating_avg"`
+		RatingCount    int      `json:"rating_count"`
+		Availability   string   `json:"availability"`
+		IsFavourite    bool     `json:"is_favourite"`
+	}
+
+	resp := make([]ListenerResponse, len(listeners))
+	for i, l := range listeners {
+		resp[i] = ListenerResponse{
+			ID:             l.ID.String(),
+			Name:           l.Name,
+			Title:          l.Title,
+			PhotoUrl:       l.PhotoURL,
+			AudioSampleUrl: l.AudioSampleURL,
+			Bio:            l.Bio,
+			Languages:      l.Languages,
+			RatePerMin:     float64(l.RatePerMinMicros) / 1000000.0,
+			RatingAvg:      l.RatingAvg,
+			RatingCount:    l.RatingCount,
+			Availability:   l.Availability,
+			IsFavourite:    l.IsFavourite,
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

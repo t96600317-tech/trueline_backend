@@ -1,8 +1,8 @@
 -- name: CreateCallSession :one
 INSERT INTO call_sessions (
-    user_id, partner_id, provider, room_id, zego_token_ref, status, rate_per_min_snapshot
+    user_id, listener_id, provider, room_id, status, rate_per_min_micros_snapshot, earning_per_min_micros_snapshot
 ) VALUES (
-    $1, $2, $3, $4, $5, 'pending', $6
+    $1, $2, $3, $4, 'pending', $5, $6
 ) RETURNING *;
 
 -- name: GetCallSessionByID :one
@@ -15,9 +15,9 @@ WHERE user_id = $1 AND status IN ('pending', 'active')
 ORDER BY created_at DESC
 LIMIT 1;
 
--- name: GetActiveCallSessionByPartnerID :one
+-- name: GetActiveCallSessionByListenerID :one
 SELECT * FROM call_sessions
-WHERE partner_id = $1 AND status IN ('pending', 'active')
+WHERE listener_id = $1 AND status IN ('pending', 'active')
 ORDER BY created_at DESC
 LIMIT 1;
 
@@ -33,21 +33,20 @@ SET status = 'ended', ended_at = NOW(), end_reason = $2
 WHERE id = $1
 RETURNING *;
 
--- name: InsertCallBillingTick :one
-INSERT INTO call_billing_ticks (
-    call_session_id, minute_index, amount_debited, wallet_balance_after
+-- name: InsertEarningsLedgerEntry :one
+INSERT INTO earnings_ledger (
+    listener_id, type, amount_micros, balance_after_micros, reference_id, idempotency_key, tax_info
 ) VALUES (
-    $1, $2, $3, $4
+    $1, $2, $3, $4, $5, $6, $7
 ) RETURNING *;
 
--- name: InsertPartnerEarnings :one
-INSERT INTO partner_earnings (
-    partner_id, call_session_id, amount_earned, tds_deducted, net_amount
-) VALUES (
-    $1, $2, $3, $4, $5
-) RETURNING *;
+-- name: GetEarningsLedgerByIdempotencyKey :one
+SELECT * FROM earnings_ledger
+WHERE idempotency_key = $1;
 
--- name: ListCallBillingTicks :many
-SELECT * FROM call_billing_ticks
-WHERE call_session_id = $1
-ORDER BY minute_index ASC;
+-- name: GetListenerEarningsSummary :one
+SELECT
+    COALESCE(SUM(CASE WHEN type = 'call_credit' THEN amount_micros ELSE 0 END), 0)::BIGINT as total_earned,
+    COALESCE(SUM(CASE WHEN type = 'payout' THEN amount_micros ELSE 0 END), 0)::BIGINT as total_paid
+FROM earnings_ledger
+WHERE listener_id = $1;

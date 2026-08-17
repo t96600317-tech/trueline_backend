@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-
 	"math/big"
 	"time"
 
@@ -14,14 +13,17 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type AuthService struct {
 	pool         *pgxpool.Pool
+	queries      *db.Queries
 	tokenManager *TokenManager
 	otpProvider  OTPProvider
 	cfg          *config.Config
+	encKey       string
 }
 
 func NewAuthService(pool *pgxpool.Pool, tm *TokenManager, otpProvider OTPProvider, cfg *config.Config) *AuthService {
@@ -30,9 +32,11 @@ func NewAuthService(pool *pgxpool.Pool, tm *TokenManager, otpProvider OTPProvide
 	}
 	return &AuthService{
 		pool:         pool,
+		queries:      db.New(pool),
 		tokenManager: tm,
 		otpProvider:  otpProvider,
 		cfg:          cfg,
+		encKey:       EnsureKey32(cfg.EncryptionKey),
 	}
 }
 
@@ -44,20 +48,21 @@ type OTPResponse struct {
 }
 
 type AuthVerifyResponse struct {
-	Token        string      `json:"token"`
-	Role         string      `json:"role"`
-	IsNewUser    bool        `json:"is_new_user"`
-	User         *db.User    `json:"user,omitempty"`
-	Partner      *db.Partner `json:"partner,omitempty"`
-	KYCStatus    string      `json:"kyc_status,omitempty"`
+	Token          string       `json:"token"`
+	Role           string       `json:"role"`
+	IsNewUser      bool         `json:"is_new_user"`
+	User           *db.User     `json:"user,omitempty"`
+	Listener       *db.Listener `json:"listener,omitempty"`
+	OnboardingStep string       `json:"onboarding_step,omitempty"`
+	KYCStatus      string       `json:"kyc_status,omitempty"`
 }
 
 func (s *AuthService) RequestOTP(ctx context.Context, phone, role string) (*OTPResponse, error) {
 	if phone == "" {
 		return nil, errors.New("phone number is required")
 	}
-	if role != "user" && role != "partner" {
-		return nil, errors.New("role must be either 'user' or 'partner'")
+	if role != "user" && role != "listener" {
+		return nil, errors.New("role must be either 'user' or 'listener'")
 	}
 
 	otpCode := "123456"
@@ -70,19 +75,42 @@ func (s *AuthService) RequestOTP(ctx context.Context, phone, role string) (*OTPR
 	}
 
 	expiresAt := time.Now().Add(5 * time.Minute)
+	phoneHash := HashPhone(phone, s.cfg.HMACKey)
 
 	if s.pool != nil {
-		query := `
-			INSERT INTO otp_requests (phone, otp_code, role, expires_at)
-			VALUES ($1, $2, $3, $4)
-		`
-		_, err := s.pool.Exec(ctx, query, phone, otpCode, role, expiresAt)
+		// 1. Check if phone is blocked in blocked_phones table
+		var blockReason string
+		err := s.pool.QueryRow(ctx, `SELECT reason FROM blocked_phones WHERE phone_hash = $1`, phoneHash).Scan(&blockReason)
+		if err == nil {
+			return nil, fmt.Errorf("PHONE_BLOCKED: This phone number has been permanently blocked from TrueLine (%s)", blockReason)
+		}
+
+		// 2. Check if listener record is blocked
+		var listenerStatus string
+		lErr := s.pool.QueryRow(ctx, `SELECT status FROM listeners WHERE phone_hash = $1`, phoneHash).Scan(&listenerStatus)
+		if lErr == nil && listenerStatus == "blocked" {
+			return nil, errors.New("PHONE_BLOCKED: This phone number has been blocked from accessing TrueLine")
+		}
+
+		// 3. Check if user record is blocked
+		var userStatus string
+		uErr := s.pool.QueryRow(ctx, `SELECT status FROM users WHERE phone_hash = $1`, phoneHash).Scan(&userStatus)
+		if uErr == nil && userStatus == "blocked" {
+			return nil, errors.New("PHONE_BLOCKED: This phone number has been blocked from accessing TrueLine")
+		}
+
+		_, err = s.queries.CreateOTPRequest(ctx, db.CreateOTPRequestParams{
+			PhoneHash: phoneHash,
+			OtpCode:   otpCode,
+			Role:      role,
+			ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to save OTP request: %w", err)
 		}
 	}
 
-	// Dispatch OTP via SMS Provider (Mock, Twilio, or MSG91)
+	// Dispatch OTP via SMS Provider
 	if err := s.otpProvider.SendOTP(ctx, phone, otpCode); err != nil {
 		return nil, fmt.Errorf("failed to send OTP SMS: %w", err)
 	}
@@ -103,22 +131,29 @@ func (s *AuthService) VerifyOTP(ctx context.Context, phone, otpCode, role string
 	if phone == "" || otpCode == "" {
 		return nil, errors.New("phone and OTP code are required")
 	}
-	if role != "user" && role != "partner" {
-		return nil, errors.New("role must be either 'user' or 'partner'")
+	if role != "user" && role != "listener" {
+		return nil, errors.New("role must be either 'user' or 'listener'")
 	}
 
-	if s.pool != nil {
-		var otpID uuid.UUID
-		var storedOTP string
-		var expiresAt time.Time
+	phoneHash := HashPhone(phone, s.cfg.HMACKey)
 
-		otpQuery := `
-			SELECT id, otp_code, expires_at FROM otp_requests
-			WHERE phone = $1 AND role = $2 AND verified = FALSE AND expires_at > NOW()
-			ORDER BY created_at DESC
-			LIMIT 1
-		`
-		err := s.pool.QueryRow(ctx, otpQuery, phone, role).Scan(&otpID, &storedOTP, &expiresAt)
+	if s.pool != nil {
+		var blockReason string
+		err := s.pool.QueryRow(ctx, `SELECT reason FROM blocked_phones WHERE phone_hash = $1`, phoneHash).Scan(&blockReason)
+		if err == nil {
+			return nil, fmt.Errorf("PHONE_BLOCKED: This phone number is permanently blocked (%s)", blockReason)
+		}
+	}
+
+	if s.cfg.OTPMockMode {
+		if otpCode != "123456" {
+			return nil, errors.New("incorrect OTP code: in development mock mode, the OTP is 123456")
+		}
+	} else if s.pool != nil {
+		otpReq, err := s.queries.GetLatestOTP(ctx, db.GetLatestOTPParams{
+			PhoneHash: phoneHash,
+			Role:      role,
+		})
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, errors.New("invalid or expired OTP")
@@ -126,80 +161,71 @@ func (s *AuthService) VerifyOTP(ctx context.Context, phone, otpCode, role string
 			return nil, fmt.Errorf("database query error: %w", err)
 		}
 
-		if storedOTP != otpCode && (!s.cfg.OTPMockMode || otpCode != "123456") {
+		if otpReq.OtpCode != otpCode {
 			return nil, errors.New("incorrect OTP code")
 		}
 
-		_, _ = s.pool.Exec(ctx, `UPDATE otp_requests SET verified = TRUE WHERE id = $1`, otpID)
-	} else {
-		// In-memory fallback if database pool is not connected yet
-		if storedOTP := "123456"; otpCode != storedOTP {
-			return nil, errors.New("incorrect OTP code")
-		}
+		_ = s.queries.MarkOTPVerified(ctx, otpReq.ID)
 	}
 
 	if role == "user" {
-		return s.handleUserLogin(ctx, phone)
+		return s.handleUserLogin(ctx, phone, phoneHash)
 	} else {
-		return s.handlePartnerLogin(ctx, phone)
+		return s.handleListenerLogin(ctx, phone, phoneHash)
 	}
 }
 
-func (s *AuthService) handleUserLogin(ctx context.Context, phone string) (*AuthVerifyResponse, error) {
-	var user db.User
+func (s *AuthService) handleUserLogin(ctx context.Context, phone, phoneHash string) (*AuthVerifyResponse, error) {
+	var user *db.User
 	var isNewUser bool
 
 	if s.pool != nil {
-		tx, err := s.pool.Begin(ctx)
-		if err != nil {
-			return nil, err
-		}
-		defer tx.Rollback(ctx)
-
-		query := `SELECT id, phone, language_pref, status, created_at, updated_at FROM users WHERE phone = $1`
-		err = tx.QueryRow(ctx, query, phone).Scan(
-			&user.ID, &user.Phone, &user.LanguagePref, &user.Status, &user.CreatedAt, &user.UpdatedAt,
-		)
-
+		u, err := s.queries.FindUserByPhoneHash(ctx, phoneHash)
 		if errors.Is(err, pgx.ErrNoRows) {
 			isNewUser = true
-			insertUser := `
-				INSERT INTO users (phone, language_pref)
-				VALUES ($1, 'hi')
-				RETURNING id, phone, language_pref, status, created_at, updated_at
-			`
-			err = tx.QueryRow(ctx, insertUser, phone).Scan(
-				&user.ID, &user.Phone, &user.LanguagePref, &user.Status, &user.CreatedAt, &user.UpdatedAt,
-			)
+			encPhone, err := EncryptPhone(phone, s.encKey)
+			if err != nil {
+				return nil, err
+			}
+
+			tx, err := s.pool.Begin(ctx)
+			if err != nil {
+				return nil, err
+			}
+			defer tx.Rollback(ctx)
+
+			qtx := s.queries.WithTx(tx)
+			createdUser, err := qtx.CreateUser(ctx, db.CreateUserParams{
+				PhoneHash:      phoneHash,
+				EncryptedPhone: encPhone,
+				LanguagePref:   "hi",
+			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to create user: %w", err)
 			}
 
-			insertWallet := `INSERT INTO wallets (user_id, balance) VALUES ($1, 0.00)`
-			_, err = tx.Exec(ctx, insertWallet, user.ID)
+			_, err = qtx.CreateWallet(ctx, db.CreateWalletParams{
+				UserID:        createdUser.ID,
+				BalanceMicros: 0,
+			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to create user wallet: %w", err)
 			}
+
+			if err := tx.Commit(ctx); err != nil {
+				return nil, err
+			}
+			user = s.mapUser(createdUser)
 		} else if err != nil {
 			return nil, fmt.Errorf("failed to fetch user: %w", err)
-		}
-
-		if err := tx.Commit(ctx); err != nil {
-			return nil, err
+		} else {
+			user = s.mapUser(u)
 		}
 	} else {
-		user = db.User{
-			ID:           uuid.New(),
-			Phone:        phone,
-			LanguagePref: "hi",
-			Status:       "active",
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
-		isNewUser = true
+		return nil, errors.New("database not connected")
 	}
 
-	token, err := s.tokenManager.GenerateToken(user.ID, "user", user.Phone, 30*24*time.Hour)
+	token, err := s.tokenManager.GenerateToken(user.ID, "user", phone, 30*24*time.Hour)
 	if err != nil {
 		return nil, err
 	}
@@ -208,72 +234,92 @@ func (s *AuthService) handleUserLogin(ctx context.Context, phone string) (*AuthV
 		Token:     token,
 		Role:      "user",
 		IsNewUser: isNewUser,
-		User:      &user,
+		User:      user,
 	}, nil
 }
 
-func (s *AuthService) handlePartnerLogin(ctx context.Context, phone string) (*AuthVerifyResponse, error) {
-	var partner db.Partner
+func (s *AuthService) handleListenerLogin(ctx context.Context, phone, phoneHash string) (*AuthVerifyResponse, error) {
+	var listener *db.Listener
 	var isNewUser bool
 
 	if s.pool != nil {
-		query := `
-			SELECT id, phone, name, photo_url, bio, languages, rate_per_min, rating_avg, rating_count,
-			       kyc_status, status, availability, current_call_session_id, created_at, updated_at
-			FROM partners WHERE phone = $1
-		`
-		err := s.pool.QueryRow(ctx, query, phone).Scan(
-			&partner.ID, &partner.Phone, &partner.Name, &partner.PhotoURL, &partner.Bio,
-			&partner.Languages, &partner.RatePerMin, &partner.RatingAvg, &partner.RatingCount,
-			&partner.KYCStatus, &partner.Status, &partner.Availability, &partner.CurrentCallSessionID,
-			&partner.CreatedAt, &partner.UpdatedAt,
-		)
-
+		l, err := s.queries.FindListenerByPhoneHash(ctx, phoneHash)
 		if errors.Is(err, pgx.ErrNoRows) {
 			isNewUser = true
-			insertPartner := `
-				INSERT INTO partners (phone, name, languages, rate_per_min, kyc_status, availability)
-				VALUES ($1, '', ARRAY['hi'], 9.00, 'pending', 'offline')
-				RETURNING id, phone, name, photo_url, bio, languages, rate_per_min, rating_avg, rating_count,
-				          kyc_status, status, availability, current_call_session_id, created_at, updated_at
-			`
-			err = s.pool.QueryRow(ctx, insertPartner, phone).Scan(
-				&partner.ID, &partner.Phone, &partner.Name, &partner.PhotoURL, &partner.Bio,
-				&partner.Languages, &partner.RatePerMin, &partner.RatingAvg, &partner.RatingCount,
-				&partner.KYCStatus, &partner.Status, &partner.Availability, &partner.CurrentCallSessionID,
-				&partner.CreatedAt, &partner.UpdatedAt,
-			)
+			encPhone, err := EncryptPhone(phone, s.encKey)
 			if err != nil {
-				return nil, fmt.Errorf("failed to create listener partner: %w", err)
+				return nil, err
 			}
+
+			createdListener, err := s.queries.CreateListener(ctx, db.CreateListenerParams{
+				PhoneHash:      phoneHash,
+				EncryptedPhone: encPhone,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("failed to create listener: %w", err)
+			}
+			listener = s.mapListener(createdListener)
 		} else if err != nil {
-			return nil, fmt.Errorf("failed to fetch partner: %w", err)
+			return nil, fmt.Errorf("failed to fetch listener: %w", err)
+		} else {
+			listener = s.mapListener(l)
 		}
 	} else {
-		partner = db.Partner{
-			ID:           uuid.New(),
-			Phone:        phone,
-			Name:         "",
-			Languages:    []string{"hi"},
-			RatePerMin:   9.00,
-			KYCStatus:    "pending",
-			Availability: "offline",
-			CreatedAt:    time.Now(),
-			UpdatedAt:    time.Now(),
-		}
-		isNewUser = true
+		return nil, errors.New("database not connected")
 	}
 
-	token, err := s.tokenManager.GenerateToken(partner.ID, "partner", partner.Phone, 30*24*time.Hour)
+	token, err := s.tokenManager.GenerateToken(listener.ID, "listener", phone, 30*24*time.Hour)
 	if err != nil {
 		return nil, err
 	}
 
 	return &AuthVerifyResponse{
-		Token:     token,
-		Role:      "partner",
-		IsNewUser: isNewUser,
-		Partner:   &partner,
-		KYCStatus: partner.KYCStatus,
+		Token:          token,
+		Role:           "listener",
+		IsNewUser:      isNewUser,
+		Listener:       listener,
+		OnboardingStep: listener.OnboardingStep,
+		KYCStatus:      listener.KYCStatus,
 	}, nil
+}
+
+func (s *AuthService) mapUser(u db.UserGenerated) *db.User {
+	return &db.User{
+		ID:           u.ID.Bytes,
+		LanguagePref: u.LanguagePref,
+		Status:       u.Status,
+		CreatedAt:    u.CreatedAt.Time,
+		UpdatedAt:    u.UpdatedAt.Time,
+	}
+}
+
+func (s *AuthService) mapListener(l db.ListenerGenerated) *db.Listener {
+	var currentCallID *uuid.UUID
+	if l.CurrentCallSessionID.Valid {
+		id := uuid.UUID(l.CurrentCallSessionID.Bytes)
+		currentCallID = &id
+	}
+
+	ratingAvg, _ := l.RatingAvg.Float64Value()
+
+	return &db.Listener{
+		ID:                   l.ID.Bytes,
+		Name:                 l.Name,
+		Title:                l.Title,
+		PhotoURL:             l.PhotoUrl,
+		AudioSampleURL:       l.AudioSampleUrl,
+		Bio:                  l.Bio,
+		Languages:            l.Languages,
+		RatePerMinMicros:     l.RatePerMinMicros,
+		EarningPerMinMicros:  l.EarningPerMinMicros,
+		RatingAvg:            ratingAvg.Float64,
+		RatingCount:          int(l.RatingCount),
+		OnboardingStep:       l.OnboardingStep,
+		KYCStatus:            l.KycStatus,
+		Status:               l.Status,
+		Availability:         l.Availability,
+		CurrentCallSessionID: currentCallID,
+		CreatedAt:            l.CreatedAt.Time,
+		UpdatedAt:            l.UpdatedAt.Time,
+	}
 }

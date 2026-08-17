@@ -10,30 +10,44 @@ import (
 	"syscall"
 	"time"
 
+	"trueline-backend/internal/admin"
 	"trueline-backend/internal/auth"
+	"trueline-backend/internal/calls"
 	"trueline-backend/internal/chat"
 	"trueline-backend/internal/config"
 	"trueline-backend/internal/db"
+	"trueline-backend/internal/earnings"
 	"trueline-backend/internal/httpx"
+	"trueline-backend/internal/kyc"
+	"trueline-backend/internal/listeners"
+	"trueline-backend/internal/payments"
+	"trueline-backend/internal/payouts"
 	"trueline-backend/internal/user"
+	"trueline-backend/internal/wallet"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
-	log.Println("Starting TrueLine Backend Service (User App Mode)...")
+	log.Println("Starting TrueLine Backend Service (Pilot V1 Mode)...")
 
-	// 1. Load Configuration
+	// 1. Load & Validate Configuration
 	cfg := config.LoadConfig()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("Configuration validation failed: %v", err)
+	}
 
 	// 2. Connect to Supabase Postgres DB
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	database, err := db.ConnectSupabaseDB(ctx, cfg.DatabaseURL)
 	var dbPool *pgxpool.Pool
 	if err != nil {
-		log.Printf("Warning: Failed to connect to Supabase DB: %v (continuing with server init)", err)
+		if cfg.Env != "development" && cfg.Env != "test" {
+			log.Fatalf("Fatal: Database connection failed in %s environment: %v", cfg.Env, err)
+		}
+		log.Printf("Warning: Failed to connect to Supabase DB: %v (continuing in development mode)", err)
 	} else {
 		dbPool = database.Pool
 		defer database.Close()
@@ -58,21 +72,70 @@ func main() {
 	authService := auth.NewAuthService(dbPool, tokenManager, otpProvider, cfg)
 	authHandler := auth.NewAuthHandler(authService)
 
-	// 4. Initialize User & Chat Services
+	// 4. Initialize Core Services
 	userService := user.NewUserService(dbPool)
 	userHandler := user.NewUserHandler(userService)
+
+	listenerService := listeners.NewListenerService(dbPool)
+	listenerHandler := listeners.NewListenerHandler(listenerService)
+
+	var secureIDProvider kyc.SecureIDProvider
+	if cfg.CashfreeClientID != "" && cfg.CashfreeClientSecret != "" {
+		secureIDProvider = kyc.NewCashfreeSecureID(cfg.CashfreeClientID, cfg.CashfreeClientSecret, cfg.CashfreeSandbox)
+		log.Println("Using Cashfree Secure ID verification provider")
+	} else {
+		secureIDProvider = kyc.NewMockSecureIDProvider()
+		log.Println("Using Mock Secure ID verification provider (Dev/Offline)")
+	}
+	kycService := kyc.NewKYCService(dbPool, secureIDProvider)
+	kycHandler := kyc.NewKYCHandler(kycService)
+
+	walletService := wallet.NewWalletService(dbPool)
+
+	cfPGClient := payments.NewCashfreePGClient(cfg.CashfreeClientID, cfg.CashfreeClientSecret, cfg.CashfreeWebhookKey, cfg.CashfreeSandbox)
+	paymentService := payments.NewPaymentService(dbPool, walletService, cfPGClient)
+	paymentHandler := payments.NewPaymentHandler(paymentService, cfPGClient)
+
+	cfPayoutsClient := payouts.NewCashfreePayoutsClient(cfg.CashfreeClientID, cfg.CashfreeClientSecret, cfg.CashfreeSandbox)
+	payoutService := payouts.NewPayoutService(dbPool, cfPayoutsClient)
+	payoutHandler := payouts.NewPayoutHandler(payoutService)
+
+	earningsService := earnings.NewEarningsService(dbPool)
+
+	// 5. Calling & Metering
+	zegoTokenProvider := calls.NewZegoTokenProvider(cfg.ZegoAppID, cfg.ZegoServerSecret)
+	callService := calls.NewCallService(dbPool, zegoTokenProvider, walletService)
+	eventHub := calls.NewEventHub()
+	callHandler := calls.NewCallHandler(callService, eventHub, tokenManager)
+
+	meteringEngine := calls.NewMeteringEngine(dbPool, walletService, earningsService, callService, eventHub)
+	go meteringEngine.Start(ctx)
+
+	adminService := admin.NewAdminService(dbPool, tokenManager, payoutService)
+	adminHandler := admin.NewAdminHandler(adminService)
 
 	chatService := chat.NewChatService(dbPool)
 	chatHandler := chat.NewChatHandler(chatService)
 
-	// 5. Build HTTP Router
-	router := httpx.NewRouter(authHandler, userHandler, chatHandler, tokenManager)
+	// 6. Build HTTP Router
+	router := httpx.NewRouter(
+		authHandler,
+		userHandler,
+		listenerHandler,
+		kycHandler,
+		paymentHandler,
+		payoutHandler,
+		adminHandler,
+		callHandler,
+		chatHandler,
+		tokenManager,
+	)
 
-	// 6. Start Server
+	// 7. Start Server
 	serverAddr := fmt.Sprintf(":%s", cfg.Port)
 	srv := &http.Server{
 		Addr:         serverAddr,
-		Handler:      router,
+		Handler:      httpx.RequestLoggerMiddleware(httpx.CORSMiddleware(router)),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -90,6 +153,7 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	log.Println("Shutting down TrueLine Backend service gracefully...")
+	cancel() // Stop metering engine
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()

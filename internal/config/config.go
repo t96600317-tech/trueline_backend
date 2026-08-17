@@ -1,8 +1,12 @@
 package config
 
 import (
+	"encoding/hex"
+	"errors"
+	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -18,8 +22,10 @@ type Config struct {
 	JWTSecret            string
 	ZegoAppID            string
 	ZegoServerSecret     string
-	RazorpayKeyID        string
-	RazorpayKeySecret    string
+	CashfreeClientID     string
+	CashfreeClientSecret string
+	CashfreeWebhookKey   string
+	CashfreeSandbox      bool
 	OTPProvider          string // "mock", "twilio", "msg91"
 	OTPMockMode          bool
 	TwilioAccountSID     string
@@ -27,11 +33,29 @@ type Config struct {
 	TwilioFromPhone      string
 	MSG91AuthKey         string
 	MSG91TemplateID      string
+	EncryptionKey        string
+	HMACKey              string
 }
 
 func LoadConfig() *Config {
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
+	}
+
+	encKey := getEnv("ENCRYPTION_KEY", "trueline_aes_key_32_bytes_long!!")
+	// If hex encoded (64 chars), decode to 32 bytes string
+	if len(encKey) == 64 {
+		if decoded, err := hex.DecodeString(encKey); err == nil && len(decoded) == 32 {
+			encKey = string(decoded)
+		}
+	}
+	// In development, ensure it is 32 bytes so server boots reliably
+	if len(encKey) != 32 {
+		if len(encKey) < 32 {
+			encKey = (encKey + "01234567890123456789012345678901")[:32]
+		} else {
+			encKey = encKey[:32]
+		}
 	}
 
 	cfg := &Config{
@@ -45,8 +69,10 @@ func LoadConfig() *Config {
 		JWTSecret:            getEnv("JWT_SECRET", "trueline_default_jwt_secret_change_in_prod"),
 		ZegoAppID:            getEnv("ZEGO_APP_ID", "123456789"),
 		ZegoServerSecret:     getEnv("ZEGO_SERVER_SECRET", "default_zego_secret"),
-		RazorpayKeyID:        getEnv("RAZORPAY_KEY_ID", ""),
-		RazorpayKeySecret:    getEnv("RAZORPAY_KEY_SECRET", ""),
+		CashfreeClientID:     getEnv("CASHFREE_CLIENT_ID", ""),
+		CashfreeClientSecret: getEnv("CASHFREE_CLIENT_SECRET", ""),
+		CashfreeWebhookKey:   getEnv("CASHFREE_WEBHOOK_KEY", ""),
+		CashfreeSandbox:      getEnv("CASHFREE_SANDBOX", "true") == "true",
 		OTPProvider:          getEnv("OTP_PROVIDER", "mock"),
 		OTPMockMode:          getEnv("OTP_MOCK_MODE", "true") == "true",
 		TwilioAccountSID:     getEnv("TWILIO_ACCOUNT_SID", ""),
@@ -54,14 +80,60 @@ func LoadConfig() *Config {
 		TwilioFromPhone:      getEnv("TWILIO_FROM_PHONE", ""),
 		MSG91AuthKey:         getEnv("MSG91_AUTH_KEY", ""),
 		MSG91TemplateID:      getEnv("MSG91_TEMPLATE_ID", ""),
+		EncryptionKey:        encKey,
+		HMACKey:              getEnv("HMAC_KEY", "trueline_hmac_key_32_bytes_long!"),
 	}
 
 	return cfg
 }
 
+func (c *Config) Validate() error {
+	if c.Env == "production" || c.Env == "staging" {
+		var missing []string
+
+		if c.DatabaseURL == "" || strings.Contains(c.DatabaseURL, "localhost") {
+			missing = append(missing, "DATABASE_URL (must not be empty or localhost)")
+		}
+		if c.JWTSecret == "" || c.JWTSecret == "trueline_default_jwt_secret_change_in_prod" {
+			missing = append(missing, "JWT_SECRET (must be configured securely)")
+		}
+		if len(c.EncryptionKey) != 32 || c.EncryptionKey == "default_encryption_key_32_bytes_long!!" {
+			missing = append(missing, "ENCRYPTION_KEY (must be exactly 32 bytes and not default)")
+		}
+		if c.HMACKey == "" || c.HMACKey == "default_hmac_key_for_pilot_v1_!!!" {
+			missing = append(missing, "HMAC_KEY (must be configured securely)")
+		}
+		if c.CashfreeClientID == "" {
+			missing = append(missing, "CASHFREE_CLIENT_ID")
+		}
+		if c.CashfreeClientSecret == "" {
+			missing = append(missing, "CASHFREE_CLIENT_SECRET")
+		}
+		if c.CashfreeWebhookKey == "" {
+			missing = append(missing, "CASHFREE_WEBHOOK_KEY")
+		}
+		if c.ZegoAppID == "" || c.ZegoAppID == "123456789" {
+			missing = append(missing, "ZEGO_APP_ID")
+		}
+		if c.ZegoServerSecret == "" || c.ZegoServerSecret == "default_zego_secret" {
+			missing = append(missing, "ZEGO_SERVER_SECRET")
+		}
+
+		if len(missing) > 0 {
+			return fmt.Errorf("missing or invalid production configuration secrets: %s", strings.Join(missing, ", "))
+		}
+	}
+
+	if len(c.EncryptionKey) != 32 {
+		return errors.New("ENCRYPTION_KEY must be exactly 32 bytes (256 bits) for AES-256-GCM")
+	}
+
+	return nil
+}
+
 func getEnv(key, fallback string) string {
-	if val, ok := os.LookupEnv(key); ok && val != "" {
-		return val
+	if val, ok := os.LookupEnv(key); ok && strings.TrimSpace(val) != "" {
+		return strings.TrimSpace(val)
 	}
 	return fallback
 }

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"trueline-backend/internal/db"
 
@@ -13,80 +12,96 @@ import (
 )
 
 type ChatService struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	queries *db.Queries
 }
 
 func NewChatService(pool *pgxpool.Pool) *ChatService {
-	return &ChatService{pool: pool}
+	return &ChatService{
+		pool:    pool,
+		queries: db.New(pool),
+	}
 }
 
 type SendMessagePayload struct {
 	Content string `json:"content"`
 }
 
-func (s *ChatService) ListUserConversations(ctx context.Context, userID uuid.UUID) ([]db.ConversationSummary, error) {
+func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, role string) ([]db.ConversationSummary, error) {
 	if s.pool == nil {
-		// Mock Conversation List for local app testing
-		return []db.ConversationSummary{
-			{
-				PartnerID:           uuid.MustParse("a0000000-0000-0000-0000-000000000001"),
-				PartnerName:         "Afreen",
-				PartnerTitle:        "Joy Helper",
-				PartnerPhotoURL:     "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=400&q=80",
-				PartnerAvailability: "online",
-				LastMessage:         "Haan bilkul! Feel free to call anytime.",
-				LastMessageSender:   "partner",
-				LastMessageTime:     time.Now().Add(-15 * time.Minute),
-				UnreadCount:         0,
-			},
-			{
-				PartnerID:           uuid.MustParse("a0000000-0000-0000-0000-000000000002"),
-				PartnerName:         "Ahmedi",
-				PartnerTitle:        "Calm Friend",
-				PartnerPhotoURL:     "https://images.unsplash.com/photo-1517841905240-472988babdf9?auto=format&fit=crop&w=400&q=80",
-				PartnerAvailability: "online",
-				LastMessage:         "Hello! Hope you had a peaceful day.",
-				LastMessageSender:   "partner",
-				LastMessageTime:     time.Now().Add(-30 * time.Minute),
-				UnreadCount:         1,
-			},
-		}, nil
+		return nil, errors.New("database not connected")
 	}
 
-	query := `
-		WITH latest_messages AS (
-			SELECT DISTINCT ON (partner_id)
-				partner_id,
-				content as last_message,
-				sender_type as last_message_sender,
-				created_at as last_message_time
-			FROM chat_messages
-			WHERE user_id = $1
-			ORDER BY partner_id, created_at DESC
-		),
-		unread_counts AS (
-			SELECT partner_id, COUNT(*) as unread_count
-			FROM chat_messages
-			WHERE user_id = $1 AND sender_type = 'partner' AND read_at IS NULL
-			GROUP BY partner_id
-		)
-		SELECT 
-			p.id as partner_id,
-			p.name as partner_name,
-			p.title as partner_title,
-			p.photo_url as partner_photo_url,
-			p.availability as partner_availability,
-			COALESCE(lm.last_message, '') as last_message,
-			COALESCE(lm.last_message_sender, '') as last_message_sender,
-			COALESCE(lm.last_message_time, p.created_at) as last_message_time,
-			COALESCE(uc.unread_count, 0) as unread_count
-		FROM latest_messages lm
-		JOIN partners p ON p.id = lm.partner_id
-		LEFT JOIN unread_counts uc ON uc.partner_id = p.id
-		ORDER BY lm.last_message_time DESC
-	`
+	var query string
+	if role == "user" {
+		query = `
+			WITH latest_messages AS (
+				SELECT DISTINCT ON (listener_id)
+					listener_id,
+					content as last_message,
+					sender_type as last_message_sender,
+					created_at as last_message_time
+				FROM chat_messages
+				WHERE user_id = $1
+				ORDER BY listener_id, created_at DESC
+			),
+			unread_counts AS (
+				SELECT listener_id, COUNT(*) as unread_count
+				FROM chat_messages
+				WHERE user_id = $1 AND sender_type = 'listener' AND read_at IS NULL
+				GROUP BY listener_id
+			)
+			SELECT
+				l.id as listener_id,
+				l.name as listener_name,
+				l.title as listener_title,
+				l.photo_url as listener_photo_url,
+				l.availability as listener_availability,
+				COALESCE(lm.last_message, '') as last_message,
+				COALESCE(lm.last_message_sender, '') as last_message_sender,
+				COALESCE(lm.last_message_time, l.created_at) as last_message_time,
+				COALESCE(uc.unread_count, 0) as unread_count
+			FROM latest_messages lm
+			JOIN listeners l ON l.id = lm.listener_id
+			LEFT JOIN unread_counts uc ON uc.listener_id = l.id
+			ORDER BY lm.last_message_time DESC
+		`
+	} else {
+		query = `
+			WITH latest_messages AS (
+				SELECT DISTINCT ON (user_id)
+					user_id,
+					content as last_message,
+					sender_type as last_message_sender,
+					created_at as last_message_time
+				FROM chat_messages
+				WHERE listener_id = $1
+				ORDER BY user_id, created_at DESC
+			),
+			unread_counts AS (
+				SELECT user_id, COUNT(*) as unread_count
+				FROM chat_messages
+				WHERE listener_id = $1 AND sender_type = 'user' AND read_at IS NULL
+				GROUP BY user_id
+			)
+			SELECT
+				u.id as user_id,
+				'' as user_name,
+				'' as user_title,
+				'' as user_photo_url,
+				'online' as user_availability,
+				COALESCE(lm.last_message, '') as last_message,
+				COALESCE(lm.last_message_sender, '') as last_message_sender,
+				COALESCE(lm.last_message_time, u.created_at) as last_message_time,
+				COALESCE(uc.unread_count, 0) as unread_count
+			FROM latest_messages lm
+			JOIN users u ON u.id = lm.user_id
+			LEFT JOIN unread_counts uc ON uc.user_id = u.id
+			ORDER BY lm.last_message_time DESC
+		`
+	}
 
-	rows, err := s.pool.Query(ctx, query, userID)
+	rows, err := s.pool.Query(ctx, query, actorID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list conversations: %w", err)
 	}
@@ -96,8 +111,8 @@ func (s *ChatService) ListUserConversations(ctx context.Context, userID uuid.UUI
 	for rows.Next() {
 		var c db.ConversationSummary
 		err := rows.Scan(
-			&c.PartnerID, &c.PartnerName, &c.PartnerTitle, &c.PartnerPhotoURL,
-			&c.PartnerAvailability, &c.LastMessage, &c.LastMessageSender,
+			&c.ListenerID, &c.ListenerName, &c.ListenerTitle, &c.ListenerPhotoURL,
+			&c.ListenerAvailability, &c.LastMessage, &c.LastMessageSender,
 			&c.LastMessageTime, &c.UnreadCount,
 		)
 		if err != nil {
@@ -109,50 +124,27 @@ func (s *ChatService) ListUserConversations(ctx context.Context, userID uuid.UUI
 	return conversations, nil
 }
 
-func (s *ChatService) GetChatMessages(ctx context.Context, userID, partnerID uuid.UUID, limit, offset int) ([]db.ChatMessage, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-
+func (s *ChatService) GetChatMessages(ctx context.Context, userID, listenerID uuid.UUID, role string) ([]db.ChatMessage, error) {
 	if s.pool == nil {
-		now := time.Now()
-		return []db.ChatMessage{
-			{
-				ID:         uuid.New(),
-				UserID:     userID,
-				PartnerID:  partnerID,
-				SenderType: "user",
-				Content:    "Namaste! Are you free to talk today?",
-				CreatedAt:  now.Add(-2 * time.Hour),
-			},
-			{
-				ID:         uuid.New(),
-				UserID:     userID,
-				PartnerID:  partnerID,
-				SenderType: "partner",
-				Content:    "Haan bilkul! Feel free to call or text anytime.",
-				CreatedAt:  now.Add(-1 * time.Hour),
-			},
-		}, nil
+		return nil, errors.New("database not connected")
 	}
 
-	// Automatically mark messages from partner as read
-	markReadQuery := `
-		UPDATE chat_messages
-		SET read_at = NOW()
-		WHERE user_id = $1 AND partner_id = $2 AND sender_type = 'partner' AND read_at IS NULL
-	`
-	_, _ = s.pool.Exec(ctx, markReadQuery, userID, partnerID)
+	var markReadQuery string
+	if role == "user" {
+		markReadQuery = `UPDATE chat_messages SET read_at = NOW() WHERE user_id = $1 AND listener_id = $2 AND sender_type = 'listener' AND read_at IS NULL`
+	} else {
+		markReadQuery = `UPDATE chat_messages SET read_at = NOW() WHERE user_id = $1 AND listener_id = $2 AND sender_type = 'user' AND read_at IS NULL`
+	}
+	_, _ = s.pool.Exec(ctx, markReadQuery, userID, listenerID)
 
 	query := `
-		SELECT id, user_id, partner_id, sender_type, content, read_at, created_at
+		SELECT id, user_id, listener_id, sender_type, content, moderation_status, read_at, created_at
 		FROM chat_messages
-		WHERE user_id = $1 AND partner_id = $2
+		WHERE user_id = $1 AND listener_id = $2
 		ORDER BY created_at ASC
-		LIMIT $3 OFFSET $4
 	`
 
-	rows, err := s.pool.Query(ctx, query, userID, partnerID, limit, offset)
+	rows, err := s.pool.Query(ctx, query, userID, listenerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch chat messages: %w", err)
 	}
@@ -162,8 +154,8 @@ func (s *ChatService) GetChatMessages(ctx context.Context, userID, partnerID uui
 	for rows.Next() {
 		var m db.ChatMessage
 		err := rows.Scan(
-			&m.ID, &m.UserID, &m.PartnerID, &m.SenderType,
-			&m.Content, &m.ReadAt, &m.CreatedAt,
+			&m.ID, &m.UserID, &m.ListenerID, &m.SenderType,
+			&m.Content, &m.ModerationStatus, &m.ReadAt, &m.CreatedAt,
 		)
 		if err != nil {
 			return nil, err
@@ -174,48 +166,28 @@ func (s *ChatService) GetChatMessages(ctx context.Context, userID, partnerID uui
 	return messages, nil
 }
 
-func (s *ChatService) SendMessage(ctx context.Context, userID, partnerID uuid.UUID, content string) (*db.ChatMessage, error) {
+func (s *ChatService) SendMessage(ctx context.Context, userID, listenerID uuid.UUID, role, content string) (*db.ChatMessage, error) {
 	if content == "" {
 		return nil, errors.New("message content cannot be empty")
 	}
 
 	if s.pool == nil {
-		return &db.ChatMessage{
-			ID:         uuid.New(),
-			UserID:     userID,
-			PartnerID:  partnerID,
-			SenderType: "user",
-			Content:    content,
-			CreatedAt:  time.Now(),
-		}, nil
+		return nil, errors.New("database not connected")
 	}
 
 	var msg db.ChatMessage
 	query := `
-		INSERT INTO chat_messages (user_id, partner_id, sender_type, content)
-		VALUES ($1, $2, 'user', $3)
-		RETURNING id, user_id, partner_id, sender_type, content, read_at, created_at
+		INSERT INTO chat_messages (user_id, listener_id, sender_type, content)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, user_id, listener_id, sender_type, content, moderation_status, read_at, created_at
 	`
-	err := s.pool.QueryRow(ctx, query, userID, partnerID, content).Scan(
-		&msg.ID, &msg.UserID, &msg.PartnerID, &msg.SenderType,
-		&msg.Content, &msg.ReadAt, &msg.CreatedAt,
+	err := s.pool.QueryRow(ctx, query, userID, listenerID, role, content).Scan(
+		&msg.ID, &msg.UserID, &msg.ListenerID, &msg.SenderType,
+		&msg.Content, &msg.ModerationStatus, &msg.ReadAt, &msg.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send chat message: %w", err)
 	}
 
 	return &msg, nil
-}
-
-func (s *ChatService) MarkMessagesRead(ctx context.Context, userID, partnerID uuid.UUID) error {
-	if s.pool == nil {
-		return nil
-	}
-	query := `
-		UPDATE chat_messages
-		SET read_at = NOW()
-		WHERE user_id = $1 AND partner_id = $2 AND sender_type = 'partner' AND read_at IS NULL
-	`
-	_, err := s.pool.Exec(ctx, query, userID, partnerID)
-	return err
 }
