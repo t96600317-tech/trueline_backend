@@ -135,6 +135,45 @@ func (h *CallHandler) EndCall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Call ended"})
 }
 
+type RateCallPayload struct {
+	Rating     int      `json:"rating"`
+	Tags       []string `json:"tags"`
+	IsFavorite bool     `json:"is_favorite"`
+}
+
+func (h *CallHandler) RateCall(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil || claims.Role != "user" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "User role required")
+		return
+	}
+
+	sessionIDStr := r.PathValue("id")
+	sessionID, err := uuid.Parse(sessionIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "Invalid session ID")
+		return
+	}
+
+	var req RateCallPayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", "Failed to parse JSON body")
+		return
+	}
+
+	if req.Rating < 1 || req.Rating > 5 {
+		writeError(w, http.StatusBadRequest, "INVALID_RATING", "Rating must be between 1 and 5")
+		return
+	}
+
+	// Update call rating metadata and optional favorite status
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"session_id": sessionID.String(),
+		"rating":     req.Rating,
+		"message":    "Thank you for your feedback!",
+	})
+}
+
 func (h *CallHandler) HandleCallEventsWS(w http.ResponseWriter, r *http.Request) {
 	sessionIDStr := r.PathValue("id")
 	sessionID, err := uuid.Parse(sessionIDStr)

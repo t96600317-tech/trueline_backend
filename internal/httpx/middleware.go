@@ -93,7 +93,7 @@ func RequireRole(role string) Middleware {
 			}
 
 			allowed := claims.Role == role || claims.Role == "admin" || claims.Role == "superadmin"
-			if (role == "listener" || role == "partner") && (claims.Role == "listener" || claims.Role == "partner" || claims.Role == "user") {
+			if (role == "listener" || role == "partner") && (claims.Role == "listener" || claims.Role == "partner") {
 				allowed = true
 			}
 
