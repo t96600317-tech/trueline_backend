@@ -96,6 +96,10 @@ func RequireRole(role string) Middleware {
 			if (role == "listener" || role == "partner") && (claims.Role == "listener" || claims.Role == "partner") {
 				allowed = true
 			}
+			// Allow authenticated user tokens to complete listener onboarding flow
+			if (role == "listener" || role == "partner") && strings.Contains(r.URL.Path, "/onboarding") {
+				allowed = true
+			}
 
 			if !allowed {
 				Error(w, http.StatusForbidden, "FORBIDDEN", "You do not have permission to access this resource")
