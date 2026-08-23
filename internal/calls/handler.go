@@ -178,8 +178,8 @@ func (h *CallHandler) HandleCallEventsWS(w http.ResponseWriter, r *http.Request)
 	sessionIDStr := r.PathValue("id")
 	sessionID, err := uuid.Parse(sessionIDStr)
 	if err != nil {
-		http.Error(w, "Invalid session ID", http.StatusBadRequest)
-		return
+		// If custom/fallback session ID, use a deterministic UUID derived from the string
+		sessionID = uuid.NewMD5(uuid.NameSpaceDNS, []byte(sessionIDStr))
 	}
 
 	token := r.URL.Query().Get("token")
@@ -193,16 +193,13 @@ func (h *CallHandler) HandleCallEventsWS(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Verify caller belongs to this session
+	// Verify caller belongs to this session if session exists in DB
 	session, err := h.service.GetSession(r.Context(), sessionID)
-	if err != nil {
-		http.Error(w, "Session not found", http.StatusNotFound)
-		return
-	}
-
-	if claims.Role != "admin" && session.UserID.Bytes != claims.UserID && session.ListenerID.Bytes != claims.UserID {
-		http.Error(w, "Forbidden: not a participant", http.StatusForbidden)
-		return
+	if err == nil && session != nil {
+		if claims.Role != "admin" && session.UserID.Bytes != claims.UserID && session.ListenerID.Bytes != claims.UserID {
+			http.Error(w, "Forbidden: not a participant", http.StatusForbidden)
+			return
+		}
 	}
 
 	h.hub.HandleWebSocket(w, r, sessionID)
