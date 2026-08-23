@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/google/uuid"
 	"trueline-backend/internal/auth"
 )
 
@@ -90,16 +91,16 @@ func (h *UserHandler) UpdateLanguage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *UserHandler) DiscoverListeners(w http.ResponseWriter, r *http.Request) {
+	var currentUserID uuid.UUID
 	claims, ok := auth.ClaimsFromContext(r.Context())
-	if !ok || claims == nil {
-		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
-		return
+	if ok && claims != nil {
+		currentUserID = claims.UserID
 	}
 
 	langFilter := r.URL.Query().Get("language")
 	searchQuery := r.URL.Query().Get("search")
 
-	listeners, err := h.service.ListDiscoverListeners(r.Context(), claims.UserID, langFilter, searchQuery)
+	listeners, err := h.service.ListDiscoverListeners(r.Context(), currentUserID, langFilter, searchQuery)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "DISCOVER_FAILED", err.Error())
 		return
