@@ -97,6 +97,7 @@ type ChatMessage struct {
 	ID               uuid.UUID  `json:"id"`
 	UserID           uuid.UUID  `json:"user_id"`
 	ListenerID       uuid.UUID  `json:"listener_id"`
+	PartnerID        uuid.UUID  `json:"partner_id"`
 	SenderType       string     `json:"sender_type"` // "user" or "listener"
 	Content          string     `json:"content"`
 	ModerationStatus string     `json:"moderation_status"`
@@ -105,13 +106,19 @@ type ChatMessage struct {
 }
 
 type ConversationSummary struct {
-	ListenerID         uuid.UUID `json:"listener_id"`
-	ListenerName       string    `json:"listener_name"`
-	ListenerTitle      string    `json:"listener_title"`
-	ListenerPhotoURL   string    `json:"listener_photo_url"`
-	ListenerAvailability string  `json:"listener_availability"`
-	LastMessage       string    `json:"last_message"`
-	LastMessageSender string    `json:"last_message_sender"`
-	LastMessageTime   time.Time `json:"last_message_time"`
-	UnreadCount       int       `json:"unread_count"`
+	PartnerID           uuid.UUID  `json:"partner_id"`
+	PartnerName         string     `json:"partner_name"`
+	PartnerTitle        string     `json:"partner_title"`
+	PartnerPhotoURL     string     `json:"partner_photo_url"`
+	PartnerAvailability string     `json:"partner_availability"`
+	ListenerID          uuid.UUID  `json:"listener_id"`
+	ListenerName        string     `json:"listener_name"`
+	ListenerTitle       string     `json:"listener_title"`
+	ListenerPhotoURL    string     `json:"listener_photo_url"`
+	ListenerAvailability string    `json:"listener_availability"`
+	UserID              *uuid.UUID `json:"user_id,omitempty"`
+	LastMessage         string     `json:"last_message"`
+	LastMessageSender   string     `json:"last_message_sender"`
+	LastMessageTime     time.Time  `json:"last_message_time"`
+	UnreadCount         int        `json:"unread_count"`
 }

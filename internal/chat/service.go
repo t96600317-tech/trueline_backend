@@ -118,6 +118,11 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 		if err != nil {
 			return nil, err
 		}
+		c.PartnerID = c.ListenerID
+		c.PartnerName = c.ListenerName
+		c.PartnerTitle = c.ListenerTitle
+		c.PartnerPhotoURL = c.ListenerPhotoURL
+		c.PartnerAvailability = c.ListenerAvailability
 		conversations = append(conversations, c)
 	}
 
@@ -160,6 +165,7 @@ func (s *ChatService) GetChatMessages(ctx context.Context, userID, listenerID uu
 		if err != nil {
 			return nil, err
 		}
+		m.PartnerID = m.ListenerID
 		messages = append(messages, m)
 	}
 
@@ -189,5 +195,6 @@ func (s *ChatService) SendMessage(ctx context.Context, userID, listenerID uuid.U
 		return nil, fmt.Errorf("failed to send chat message: %w", err)
 	}
 
+	msg.PartnerID = msg.ListenerID
 	return &msg, nil
 }
