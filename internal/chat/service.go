@@ -86,7 +86,7 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 			)
 			SELECT
 				u.id as user_id,
-				COALESCE(NULLIF(u.name, ''), 'user' || RIGHT(REPLACE(u.id::text, '-', ''), 6)) as user_name,
+				COALESCE(NULLIF(u.name, ''), 'user' || (100000 + (abs(hashtext(u.id::text)) % 900000))::text) as user_name,
 				'Caller' as user_title,
 				'' as user_photo_url,
 				'online' as user_availability,
