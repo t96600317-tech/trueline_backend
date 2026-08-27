@@ -10,6 +10,7 @@ import (
 	"trueline-backend/internal/wallet"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -68,9 +69,11 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	if listener.CurrentCallSessionID.Valid {
 		var oldSessionStatus string
 		var oldSessionCreatedAt time.Time
-		_ = tx.QueryRow(ctx, `SELECT status, created_at FROM call_sessions WHERE id = $1`, listener.CurrentCallSessionID).Scan(&oldSessionStatus, &oldSessionCreatedAt)
-		if oldSessionStatus == "ended" || oldSessionStatus == "cancelled" || time.Since(oldSessionCreatedAt) > 60*time.Second {
-			// Clear stale session
+		var oldUserID pgtype.UUID
+		_ = tx.QueryRow(ctx, `SELECT status, created_at, user_id FROM call_sessions WHERE id = $1`, listener.CurrentCallSessionID).Scan(&oldSessionStatus, &oldSessionCreatedAt, &oldUserID)
+		if oldSessionStatus == "ended" || oldSessionStatus == "cancelled" || oldSessionStatus == "pending" || oldUserID.Bytes == userID || time.Since(oldSessionCreatedAt) > 30*time.Second {
+			// Cancel previous pending/superseded session and unlock
+			_, _ = tx.Exec(ctx, `UPDATE call_sessions SET status = 'cancelled', end_reason = 'superseded' WHERE id = $1 AND status = 'pending'`, listener.CurrentCallSessionID)
 			_, _ = tx.Exec(ctx, `UPDATE listeners SET current_call_session_id = NULL WHERE id = $1`, listener.ID)
 			listener.CurrentCallSessionID.Valid = false
 		} else {
@@ -159,24 +162,27 @@ func (s *CallService) GetIncomingCallForListener(ctx context.Context, listenerID
 		SELECT cs.id::text, cs.room_id, cs.user_id::text,
 		       COALESCE(NULLIF(u.name, ''), 'user' || (100000 + (abs(hashtext(u.id::text)) % 900000))::text) as caller_name,
 		       cs.status,
-		       cs.rate_per_min_micros / 1000000.0,
-		       cs.earning_per_min_micros / 1000000.0,
+		       (COALESCE(cs.rate_per_min_micros_snapshot, 9000000)::float8 / 1000000.0),
+		       (COALESCE(cs.earning_per_min_micros_snapshot, 4500000)::float8 / 1000000.0),
 		       cs.created_at::text
 		FROM call_sessions cs
 		LEFT JOIN users u ON u.id = cs.user_id
 		WHERE cs.listener_id = $1
 		  AND cs.status = 'pending'
-		  AND cs.created_at >= NOW() - INTERVAL '60 seconds'
+		  AND cs.created_at >= NOW() - INTERVAL '120 seconds'
 		ORDER BY cs.created_at DESC
 		LIMIT 1;
 	`
 
 	var inc IncomingCallSession
-	err := s.pool.QueryRow(ctx, query, listenerID).Scan(
+	err := s.pool.QueryRow(ctx, query, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(
 		&inc.ID, &inc.RoomID, &inc.CallerID, &inc.CallerName, &inc.Status, &inc.RatePerMin, &inc.EarningPerMin, &inc.CreatedAt,
 	)
 	if err != nil {
-		return nil, nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("GetIncomingCall query error: %w", err)
 	}
 
 	return &inc, nil
