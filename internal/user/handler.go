@@ -68,6 +68,32 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type UpdateProfilePayload struct {
+	Name string `json:"name"`
+}
+
+func (h *UserHandler) UpdateProfile(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	var req UpdateProfilePayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", "Failed to parse JSON body")
+		return
+	}
+
+	u, err := h.service.UpdateProfile(r.Context(), claims.UserID, req.Name)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "UPDATE_FAILED", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, u)
+}
+
 func (h *UserHandler) UpdateLanguage(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok || claims == nil {

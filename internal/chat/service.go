@@ -86,8 +86,8 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 			)
 			SELECT
 				u.id as user_id,
-				'' as user_name,
-				'' as user_title,
+				COALESCE(NULLIF(u.name, ''), 'user' || RIGHT(REPLACE(u.id::text, '-', ''), 6)) as user_name,
+				'Caller' as user_title,
 				'' as user_photo_url,
 				'online' as user_availability,
 				COALESCE(lm.last_message, '') as last_message,
@@ -110,19 +110,35 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 	conversations := make([]db.ConversationSummary, 0)
 	for rows.Next() {
 		var c db.ConversationSummary
+		var targetID uuid.UUID
+		var targetName, targetTitle, targetPhoto, targetAvailability string
 		err := rows.Scan(
-			&c.ListenerID, &c.ListenerName, &c.ListenerTitle, &c.ListenerPhotoURL,
-			&c.ListenerAvailability, &c.LastMessage, &c.LastMessageSender,
+			&targetID, &targetName, &targetTitle, &targetPhoto,
+			&targetAvailability, &c.LastMessage, &c.LastMessageSender,
 			&c.LastMessageTime, &c.UnreadCount,
 		)
 		if err != nil {
 			return nil, err
 		}
-		c.PartnerID = c.ListenerID
-		c.PartnerName = c.ListenerName
-		c.PartnerTitle = c.ListenerTitle
-		c.PartnerPhotoURL = c.ListenerPhotoURL
-		c.PartnerAvailability = c.ListenerAvailability
+		c.PartnerID = targetID
+		c.PartnerName = targetName
+		c.PartnerTitle = targetTitle
+		c.PartnerPhotoURL = targetPhoto
+		c.PartnerAvailability = targetAvailability
+
+		if role == "user" {
+			c.ListenerID = targetID
+			c.ListenerName = targetName
+			c.ListenerTitle = targetTitle
+			c.ListenerPhotoURL = targetPhoto
+			c.ListenerAvailability = targetAvailability
+		} else {
+			c.UserID = &targetID
+			c.UserName = targetName
+			c.UserTitle = targetTitle
+			c.UserPhotoURL = targetPhoto
+			c.UserAvailability = targetAvailability
+		}
 		conversations = append(conversations, c)
 	}
 

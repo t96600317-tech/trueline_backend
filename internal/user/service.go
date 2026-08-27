@@ -31,7 +31,15 @@ func (s *UserService) GetUserProfile(ctx context.Context, userID uuid.UUID) (*db
 		return nil, 0, errors.New("database not connected")
 	}
 
-	u, err := s.queries.GetUserByID(ctx, pgtype.UUID{Bytes: userID, Valid: true})
+	var user db.User
+	query := `
+		SELECT id, COALESCE(NULLIF(name, ''), 'user' || RIGHT(REPLACE(id::text, '-', ''), 6)), language_pref, status, created_at, updated_at
+		FROM users
+		WHERE id = $1
+	`
+	err := s.pool.QueryRow(ctx, query, userID).Scan(
+		&user.ID, &user.Name, &user.LanguagePref, &user.Status, &user.CreatedAt, &user.UpdatedAt,
+	)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, 0, errors.New("user not found")
@@ -45,7 +53,24 @@ func (s *UserService) GetUserProfile(ctx context.Context, userID uuid.UUID) (*db
 		balance = w.BalanceMicros
 	}
 
-	return s.mapUser(u), balance, nil
+	return &user, balance, nil
+}
+
+func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, name string) (*db.User, error) {
+	if s.pool == nil {
+		return nil, errors.New("database not connected")
+	}
+
+	trimmed := strings.TrimSpace(name)
+	if trimmed != "" {
+		_, err := s.pool.Exec(ctx, "UPDATE users SET name = $2, updated_at = NOW() WHERE id = $1", userID, trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("failed to update user profile name: %w", err)
+		}
+	}
+
+	user, _, err := s.GetUserProfile(ctx, userID)
+	return user, err
 }
 
 func (s *UserService) UpdateLanguage(ctx context.Context, userID uuid.UUID, language string) (*db.User, error) {
@@ -61,6 +86,10 @@ func (s *UserService) UpdateLanguage(ctx context.Context, userID uuid.UUID, lang
 		return nil, fmt.Errorf("failed to update language preference: %w", err)
 	}
 
+	user, _, _ := s.GetUserProfile(ctx, userID)
+	if user != nil {
+		return user, nil
+	}
 	return s.mapUser(u), nil
 }
 

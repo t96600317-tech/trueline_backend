@@ -8,6 +8,7 @@ import (
 
 type User struct {
 	ID             uuid.UUID `json:"id"`
+	Name           string    `json:"name"`
 	PhoneHash      string    `json:"-"`
 	EncryptedPhone string    `json:"-"`
 	LanguagePref   string    `json:"language_pref"`
@@ -106,19 +107,23 @@ type ChatMessage struct {
 }
 
 type ConversationSummary struct {
-	PartnerID           uuid.UUID  `json:"partner_id"`
-	PartnerName         string     `json:"partner_name"`
-	PartnerTitle        string     `json:"partner_title"`
-	PartnerPhotoURL     string     `json:"partner_photo_url"`
+	PartnerID            uuid.UUID  `json:"partner_id"`
+	PartnerName          string     `json:"partner_name"`
+	PartnerTitle         string     `json:"partner_title"`
+	PartnerPhotoURL      string     `json:"partner_photo_url"`
 	PartnerAvailability string     `json:"partner_availability"`
-	ListenerID          uuid.UUID  `json:"listener_id"`
-	ListenerName        string     `json:"listener_name"`
-	ListenerTitle       string     `json:"listener_title"`
-	ListenerPhotoURL    string     `json:"listener_photo_url"`
-	ListenerAvailability string    `json:"listener_availability"`
-	UserID              *uuid.UUID `json:"user_id,omitempty"`
-	LastMessage         string     `json:"last_message"`
-	LastMessageSender   string     `json:"last_message_sender"`
-	LastMessageTime     time.Time  `json:"last_message_time"`
-	UnreadCount         int        `json:"unread_count"`
+	ListenerID           uuid.UUID  `json:"listener_id"`
+	ListenerName         string     `json:"listener_name"`
+	ListenerTitle        string     `json:"listener_title"`
+	ListenerPhotoURL     string     `json:"listener_photo_url"`
+	ListenerAvailability string     `json:"listener_availability"`
+	UserID               *uuid.UUID `json:"user_id,omitempty"`
+	UserName             string     `json:"user_name,omitempty"`
+	UserTitle            string     `json:"user_title,omitempty"`
+	UserPhotoURL         string     `json:"user_photo_url,omitempty"`
+	UserAvailability     string     `json:"user_availability,omitempty"`
+	LastMessage          string     `json:"last_message"`
+	LastMessageSender    string     `json:"last_message_sender"`
+	LastMessageTime      time.Time  `json:"last_message_time"`
+	UnreadCount          int        `json:"unread_count"`
 }
