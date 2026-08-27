@@ -86,7 +86,7 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	}
 
 	// 5. Create Call Session
-	roomID := fmt.Sprintf("room_%s_%s_%d", userID.String()[:4], listenerID.String()[:4], time.Now().Unix())
+	roomID := fmt.Sprintf("call_%s_%s", listenerID.String()[:8], userID.String()[:8])
 	session, err := qtx.CreateCallSession(ctx, db.CreateCallSessionParams{
 		UserID:                      pgtype.UUID{Bytes: userID, Valid: true},
 		ListenerID:                  pgtype.UUID{Bytes: listenerID, Valid: true},
@@ -125,7 +125,51 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	}, nil
 }
 
+type IncomingCallSession struct {
+	ID            string  `json:"id"`
+	RoomID        string  `json:"room_id"`
+	CallerID      string  `json:"caller_id"`
+	CallerName    string  `json:"caller_name"`
+	Status        string  `json:"status"`
+	RatePerMin    float64 `json:"rate_per_min"`
+	EarningPerMin float64 `json:"earning_per_min"`
+	CreatedAt     string  `json:"created_at"`
+}
+
+func (s *CallService) GetIncomingCallForListener(ctx context.Context, listenerID uuid.UUID) (*IncomingCallSession, error) {
+	if s.pool == nil {
+		return nil, errors.New("database not connected")
+	}
+
+	query := `
+		SELECT cs.id::text, cs.room_id, cs.user_id::text,
+		       COALESCE(NULLIF(u.name, ''), 'user' || (100000 + (abs(hashtext(u.id::text)) % 900000))::text) as caller_name,
+		       cs.status,
+		       cs.rate_per_min_micros / 1000000.0,
+		       cs.earning_per_min_micros / 1000000.0,
+		       cs.created_at::text
+		FROM call_sessions cs
+		LEFT JOIN users u ON u.id = cs.user_id
+		WHERE cs.listener_id = $1
+		  AND cs.status = 'pending'
+		  AND cs.created_at >= NOW() - INTERVAL '60 seconds'
+		ORDER BY cs.created_at DESC
+		LIMIT 1;
+	`
+
+	var inc IncomingCallSession
+	err := s.pool.QueryRow(ctx, query, listenerID).Scan(
+		&inc.ID, &inc.RoomID, &inc.CallerID, &inc.CallerName, &inc.Status, &inc.RatePerMin, &inc.EarningPerMin, &inc.CreatedAt,
+	)
+	if err != nil {
+		return nil, nil
+	}
+
+	return &inc, nil
+}
+
 type CallAcceptResponse struct {
+	RoomID        string `json:"room_id"`
 	ListenerToken string `json:"listener_token"`
 }
 
@@ -159,6 +203,7 @@ func (s *CallService) AcceptCall(ctx context.Context, sessionID, listenerID uuid
 	}
 
 	return &CallAcceptResponse{
+		RoomID:        session.RoomID,
 		ListenerToken: token,
 	}, nil
 }

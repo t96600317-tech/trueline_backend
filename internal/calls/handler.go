@@ -81,6 +81,22 @@ func (h *CallHandler) InitiateCall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, res)
 }
 
+func (h *CallHandler) GetIncomingCall(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil || claims.Role != "listener" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Listener role required")
+		return
+	}
+
+	inc, err := h.service.GetIncomingCallForListener(r.Context(), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "DB_ERROR", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, inc)
+}
+
 func (h *CallHandler) AcceptCall(w http.ResponseWriter, r *http.Request) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok || claims == nil || claims.Role != "listener" {
