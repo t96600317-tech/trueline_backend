@@ -65,8 +65,21 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 		return nil, errors.New("listener is not approved")
 	}
 
-	if listener.Availability != "online" || listener.CurrentCallSessionID.Valid {
-		return nil, errors.New("listener is currently busy on another call or offline")
+	if listener.CurrentCallSessionID.Valid {
+		var oldSessionStatus string
+		var oldSessionCreatedAt time.Time
+		_ = tx.QueryRow(ctx, `SELECT status, created_at FROM call_sessions WHERE id = $1`, listener.CurrentCallSessionID).Scan(&oldSessionStatus, &oldSessionCreatedAt)
+		if oldSessionStatus == "ended" || oldSessionStatus == "cancelled" || time.Since(oldSessionCreatedAt) > 60*time.Second {
+			// Clear stale session
+			_, _ = tx.Exec(ctx, `UPDATE listeners SET current_call_session_id = NULL WHERE id = $1`, listener.ID)
+			listener.CurrentCallSessionID.Valid = false
+		} else {
+			return nil, errors.New("listener is currently busy on another call")
+		}
+	}
+
+	if listener.Availability != "online" {
+		return nil, errors.New("listener is currently offline")
 	}
 
 	// 3. Check user balance (at least 1 minute = 9 coins = 9,000,000 micros)
@@ -78,7 +91,8 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 		return nil, errors.New("insufficient balance: minimum 9 coins required to start call")
 	}
 
-	// 4. Check if user is already on an active call
+	// 4. Check if user is already on an active call (auto-clear stale pending sessions older than 60s)
+	_, _ = tx.Exec(ctx, `UPDATE call_sessions SET status = 'ended', end_reason = 'timeout' WHERE user_id = $1 AND status = 'pending' AND created_at < NOW() - INTERVAL '60 seconds'`, pgtype.UUID{Bytes: userID, Valid: true})
 	var userActiveCallCount int64
 	_ = tx.QueryRow(ctx, `SELECT COUNT(*) FROM call_sessions WHERE user_id = $1 AND status IN ('pending', 'active')`, pgtype.UUID{Bytes: userID, Valid: true}).Scan(&userActiveCallCount)
 	if userActiveCallCount > 0 {

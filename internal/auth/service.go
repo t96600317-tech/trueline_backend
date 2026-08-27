@@ -208,7 +208,7 @@ func (s *AuthService) handleUserLogin(ctx context.Context, phone, phoneHash stri
 
 			_, err = qtx.CreateWallet(ctx, db.CreateWalletParams{
 				UserID:        createdUser.ID,
-				BalanceMicros: 0,
+				BalanceMicros: 1000000000, // 1,000 starter coins
 			})
 			if err != nil {
 				return nil, fmt.Errorf("failed to create user wallet: %w", err)
