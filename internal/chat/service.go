@@ -60,7 +60,8 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 				COALESCE(lm.last_message, '') as last_message,
 				COALESCE(lm.last_message_sender, '') as last_message_sender,
 				COALESCE(lm.last_message_time, l.created_at) as last_message_time,
-				COALESCE(uc.unread_count, 0) as unread_count
+				COALESCE(uc.unread_count, 0) as unread_count,
+				false as is_regular
 			FROM latest_messages lm
 			JOIN listeners l ON l.id = lm.listener_id
 			LEFT JOIN unread_counts uc ON uc.listener_id = l.id
@@ -83,6 +84,18 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 				FROM chat_messages
 				WHERE listener_id = $1 AND sender_type = 'user' AND read_at IS NULL
 				GROUP BY user_id
+			),
+			msg_counts AS (
+				SELECT user_id, COUNT(*) as total_messages
+				FROM chat_messages
+				WHERE listener_id = $1
+				GROUP BY user_id
+			),
+			call_counts AS (
+				SELECT user_id, COUNT(*) as total_calls
+				FROM call_sessions
+				WHERE listener_id = $1 AND status IN ('ended', 'completed', 'active')
+				GROUP BY user_id
 			)
 			SELECT
 				u.id as user_id,
@@ -93,10 +106,13 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 				COALESCE(lm.last_message, '') as last_message,
 				COALESCE(lm.last_message_sender, '') as last_message_sender,
 				COALESCE(lm.last_message_time, u.created_at) as last_message_time,
-				COALESCE(uc.unread_count, 0) as unread_count
+				COALESCE(uc.unread_count, 0) as unread_count,
+				COALESCE(mc.total_messages >= 4, false) OR COALESCE(cc.total_calls >= 2, false) as is_regular
 			FROM latest_messages lm
 			JOIN users u ON u.id = lm.user_id
 			LEFT JOIN unread_counts uc ON uc.user_id = u.id
+			LEFT JOIN msg_counts mc ON mc.user_id = u.id
+			LEFT JOIN call_counts cc ON cc.user_id = u.id
 			ORDER BY lm.last_message_time DESC
 		`
 	}
@@ -115,7 +131,7 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 		err := rows.Scan(
 			&targetID, &targetName, &targetTitle, &targetPhoto,
 			&targetAvailability, &c.LastMessage, &c.LastMessageSender,
-			&c.LastMessageTime, &c.UnreadCount,
+			&c.LastMessageTime, &c.UnreadCount, &c.IsRegular,
 		)
 		if err != nil {
 			return nil, err

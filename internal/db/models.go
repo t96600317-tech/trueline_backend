@@ -126,4 +126,5 @@ type ConversationSummary struct {
 	LastMessageSender    string     `json:"last_message_sender"`
 	LastMessageTime      time.Time  `json:"last_message_time"`
 	UnreadCount          int        `json:"unread_count"`
+	IsRegular            bool       `json:"is_regular"`
 }
