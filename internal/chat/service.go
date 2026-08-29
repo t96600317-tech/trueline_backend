@@ -104,12 +104,9 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 				'' as user_photo_url,
 				CASE 
 					WHEN EXISTS (
-						SELECT 1 FROM chat_messages cm 
-						WHERE cm.user_id = u.id AND cm.created_at > NOW() - INTERVAL '15 minutes'
-					) OR EXISTS (
 						SELECT 1 FROM call_sessions cs 
-						WHERE cs.user_id = u.id AND (cs.status = 'active' OR cs.created_at > NOW() - INTERVAL '15 minutes')
-					) OR u.updated_at > NOW() - INTERVAL '15 minutes' THEN 'online'
+						WHERE cs.user_id = u.id AND cs.status = 'active'
+					) OR u.updated_at > NOW() - INTERVAL '20 seconds' THEN 'online'
 					ELSE 'offline'
 				END as user_availability,
 				COALESCE(lm.last_message, '') as last_message,
