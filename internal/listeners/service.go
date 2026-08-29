@@ -854,7 +854,57 @@ func (s *ListenerService) GetTransactions(ctx context.Context, listenerID uuid.U
 		}
 	}
 
-	// 2. Fetch Payout Transactions
+	// 2. Fetch Weekly Volume Target Bonuses (500+ total minutes across ALL users in a week)
+	bonusRows, bErr := s.pool.Query(ctx, `
+		SELECT 
+			date_trunc('week', cs.created_at) as week_start,
+			COALESCE(SUM(EXTRACT(EPOCH FROM (cs.ended_at - cs.started_at))) / 60, 0) as total_min,
+			MAX(cs.created_at) as last_call_time
+		FROM call_sessions cs
+		WHERE cs.listener_id = $1 
+		  AND cs.status = 'ended' 
+		  AND cs.started_at IS NOT NULL 
+		  AND cs.ended_at IS NOT NULL
+		GROUP BY date_trunc('week', cs.created_at)
+		HAVING COALESCE(SUM(EXTRACT(EPOCH FROM (cs.ended_at - cs.started_at))) / 60, 0) >= 500
+		ORDER BY week_start DESC
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+
+	if bErr == nil {
+		defer bonusRows.Close()
+		now := time.Now()
+		for bonusRows.Next() {
+			var weekStart, lastCallTime time.Time
+			var totalMin int64
+			if err := bonusRows.Scan(&weekStart, &totalMin, &lastCallTime); err == nil {
+				weekEnd := weekStart.AddDate(0, 0, 6)
+				dateStr := fmt.Sprintf("%s – %s", weekStart.Format("02 Jan"), weekEnd.Format("02 Jan, 2006"))
+				monthGroup := strings.ToUpper(lastCallTime.Format("Jan 2006"))
+
+				txStatus := "Cleared"
+				statusColor := "gray"
+				if now.Before(weekEnd.AddDate(0, 0, 1)) {
+					txStatus = "Pending"
+					statusColor = "orange"
+				}
+
+				transactions = append(transactions, TransactionItem{
+					ID:          fmt.Sprintf("bonus_%s", weekStart.Format("20060102")),
+					Title:       fmt.Sprintf("Weekly Volume Bonus · %d min", totalMin),
+					Timestamp:   dateStr,
+					Amount:      "+ ₹150.00",
+					Status:      txStatus,
+					StatusColor: statusColor,
+					IsPositive:  true,
+					FilterType:  "BONUS",
+					MonthGroup:  monthGroup,
+					CreatedAt:   lastCallTime.Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	// 3. Fetch Payout Transactions
 	payoutRows, pErr := s.pool.Query(ctx, `
 		SELECT 
 			id,
