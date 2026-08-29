@@ -83,6 +83,26 @@ func AuthMiddleware(tm *auth.TokenManager) Middleware {
 	}
 }
 
+func OptionalAuthMiddleware(tm *auth.TokenManager) Middleware {
+	return func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			authHeader := r.Header.Get("Authorization")
+			if authHeader != "" {
+				parts := strings.SplitN(authHeader, " ", 2)
+				if len(parts) == 2 && strings.ToLower(parts[0]) == "bearer" {
+					claims, err := tm.ValidateToken(parts[1])
+					if err == nil && claims != nil {
+						ctx := auth.ContextWithClaims(r.Context(), claims)
+						next(w, r.WithContext(ctx))
+						return
+					}
+				}
+			}
+			next(w, r)
+		}
+	}
+}
+
 func RequireRole(role string) Middleware {
 	return func(next http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
