@@ -764,4 +764,155 @@ func (s *ListenerService) GetCallHistory(ctx context.Context, listenerID uuid.UU
 	}, nil
 }
 
+type TransactionItem struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Timestamp   string `json:"timestamp"`
+	Amount      string `json:"amount"`
+	Status      string `json:"status"`
+	StatusColor string `json:"status_color"`
+	IsPositive  bool   `json:"is_positive"`
+	FilterType  string `json:"filter_type"` // "CALLS", "BONUS", "PAYOUT", "PENALTY"
+	MonthGroup  string `json:"month_group"` // "AUG 2026"
+	CreatedAt   string `json:"created_at"`
+}
+
+type TransactionsResponse struct {
+	Transactions []TransactionItem `json:"transactions"`
+}
+
+func (s *ListenerService) GetTransactions(ctx context.Context, listenerID uuid.UUID) (*TransactionsResponse, error) {
+	if s.pool == nil {
+		return nil, errors.New("database not connected")
+	}
+
+	transactions := make([]TransactionItem, 0)
+
+	// 1. Fetch Call Transactions
+	rows, err := s.pool.Query(ctx, `
+		SELECT 
+			cs.id,
+			COALESCE(NULLIF(u.name, ''), 'caller ' || SUBSTRING(REPLACE(cs.user_id::text, '-', ''), 1, 4)) as caller_name,
+			cs.status,
+			cs.started_at,
+			cs.ended_at,
+			cs.earning_per_min_micros_snapshot,
+			cs.created_at
+		FROM call_sessions cs
+		LEFT JOIN users u ON u.id = cs.user_id
+		WHERE cs.listener_id = $1 AND cs.status = 'ended' AND cs.started_at IS NOT NULL AND cs.ended_at IS NOT NULL
+		ORDER BY cs.created_at DESC
+		LIMIT 50
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+
+	if err == nil {
+		defer rows.Close()
+		now := time.Now()
+		for rows.Next() {
+			var id, callerName, status string
+			var startedAt, endedAt *time.Time
+			var earnPerMinMicros int64
+			var createdAt time.Time
+
+			if err := rows.Scan(&id, &callerName, &status, &startedAt, &endedAt, &earnPerMinMicros, &createdAt); err == nil {
+				durSec := 0
+				if startedAt != nil && endedAt != nil {
+					durSec = int(endedAt.Sub(*startedAt).Seconds())
+				}
+				durM := durSec / 60
+				durS := durSec % 60
+				durFormatted := fmt.Sprintf("%02d:%02d", durM, durS)
+
+				timeAndDate := createdAt.Format("02 Jan, 3:04 PM")
+				timestampStr := fmt.Sprintf("%s · %s", durFormatted, timeAndDate)
+
+				earnCoins := (float64(earnPerMinMicros) / 1000000.0) * (float64(durSec) / 60.0)
+				amountStr := fmt.Sprintf("+ ₹%.2f", earnCoins)
+
+				txStatus := "Pending"
+				statusColor := "orange"
+				if now.Sub(createdAt) > 48*time.Hour {
+					txStatus = "Cleared"
+					statusColor = "gray"
+				}
+
+				monthGroup := strings.ToUpper(createdAt.Format("Jan 2006"))
+
+				transactions = append(transactions, TransactionItem{
+					ID:          id,
+					Title:       "Call · " + callerName,
+					Timestamp:   timestampStr,
+					Amount:      amountStr,
+					Status:      txStatus,
+					StatusColor: statusColor,
+					IsPositive:  true,
+					FilterType:  "CALLS",
+					MonthGroup:  monthGroup,
+					CreatedAt:   createdAt.Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	// 2. Fetch Payout Transactions
+	payoutRows, pErr := s.pool.Query(ctx, `
+		SELECT 
+			id,
+			net_amount_micros,
+			status,
+			upi_id,
+			requested_at
+		FROM payout_requests
+		WHERE listener_id = $1
+		ORDER BY requested_at DESC
+		LIMIT 20
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+
+	if pErr == nil {
+		defer payoutRows.Close()
+		for payoutRows.Next() {
+			var id string
+			var netAmountMicros int64
+			var status, upiID string
+			var requestedAt time.Time
+
+			if err := payoutRows.Scan(&id, &netAmountMicros, &status, &upiID, &requestedAt); err == nil {
+				maskedUPI := "••••"
+				if len(upiID) > 4 {
+					maskedUPI += upiID[len(upiID)-4:]
+				}
+
+				coins := float64(netAmountMicros) / 1000000.0
+				amountStr := fmt.Sprintf("₹%.2f", coins)
+
+				txStatus := "Pending"
+				if status == "paid" {
+					txStatus = "Paid"
+				}
+
+				monthGroup := strings.ToUpper(requestedAt.Format("Jan 2006"))
+				timestampStr := requestedAt.Format("02 Jan, 3:04 PM")
+
+				transactions = append(transactions, TransactionItem{
+					ID:          id,
+					Title:       "Payout to UPI " + maskedUPI,
+					Timestamp:   timestampStr,
+					Amount:      amountStr,
+					Status:      txStatus,
+					StatusColor: "gray",
+					IsPositive:  false,
+					FilterType:  "PAYOUT",
+					MonthGroup:  monthGroup,
+					CreatedAt:   requestedAt.Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	return &TransactionsResponse{
+		Transactions: transactions,
+	}, nil
+}
+
+
 

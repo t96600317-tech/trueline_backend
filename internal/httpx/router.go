@@ -72,6 +72,7 @@ func NewRouter(
 	mux.HandleFunc("POST /api/v1/listener/payout-requests", Chain(payoutHandler.RequestPayout, authMiddleware, listenerRoleMiddleware))
 	mux.HandleFunc("GET /api/v1/listener/call-history", Chain(listenerHandler.GetCallHistory, authMiddleware, listenerRoleMiddleware))
 	mux.HandleFunc("GET /api/v1/listener/calls", Chain(listenerHandler.GetCallHistory, authMiddleware, listenerRoleMiddleware))
+	mux.HandleFunc("GET /api/v1/listener/transactions", Chain(listenerHandler.GetTransactions, authMiddleware, listenerRoleMiddleware))
 
 	// 4. Payment Endpoints
 	mux.HandleFunc("GET /api/v1/payments/catalogue", paymentHandler.GetCatalogue)
