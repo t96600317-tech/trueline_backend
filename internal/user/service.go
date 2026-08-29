@@ -31,6 +31,9 @@ func (s *UserService) GetUserProfile(ctx context.Context, userID uuid.UUID) (*db
 		return nil, 0, errors.New("database not connected")
 	}
 
+	// Update presence timestamp
+	_, _ = s.pool.Exec(ctx, "UPDATE users SET updated_at = NOW() WHERE id = $1", userID)
+
 	var user db.User
 	query := `
 		SELECT id, COALESCE(NULLIF(name, ''), 'user' || RIGHT(REPLACE(id::text, '-', ''), 6)), language_pref, status, created_at, updated_at
@@ -54,6 +57,14 @@ func (s *UserService) GetUserProfile(ctx context.Context, userID uuid.UUID) (*db
 	}
 
 	return &user, balance, nil
+}
+
+func (s *UserService) Heartbeat(ctx context.Context, userID uuid.UUID) error {
+	if s.pool == nil {
+		return errors.New("database not connected")
+	}
+	_, err := s.pool.Exec(ctx, "UPDATE users SET updated_at = NOW() WHERE id = $1", userID)
+	return err
 }
 
 func (s *UserService) UpdateProfile(ctx context.Context, userID uuid.UUID, name string) (*db.User, error) {

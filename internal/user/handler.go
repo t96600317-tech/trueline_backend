@@ -68,6 +68,17 @@ func (h *UserHandler) GetMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *UserHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	_ = h.service.Heartbeat(r.Context(), claims.UserID)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "online"})
+}
+
 type UpdateProfilePayload struct {
 	Name string `json:"name"`
 }

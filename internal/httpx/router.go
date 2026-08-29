@@ -44,6 +44,7 @@ func NewRouter(
 
 	// 2. User App Endpoints
 	mux.HandleFunc("GET /api/v1/user/me", Chain(userHandler.GetMe, authMiddleware, userRoleMiddleware))
+	mux.HandleFunc("POST /api/v1/user/heartbeat", Chain(userHandler.Heartbeat, authMiddleware, userRoleMiddleware))
 	mux.HandleFunc("PATCH /api/v1/user/profile", Chain(userHandler.UpdateProfile, authMiddleware, userRoleMiddleware))
 	mux.HandleFunc("POST /api/v1/user/profile", Chain(userHandler.UpdateProfile, authMiddleware, userRoleMiddleware))
 	mux.HandleFunc("PATCH /api/v1/user/language", Chain(userHandler.UpdateLanguage, authMiddleware, userRoleMiddleware))
