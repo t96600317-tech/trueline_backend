@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	"trueline-backend/internal/db"
 
@@ -212,17 +214,19 @@ type RecentCallItem struct {
 }
 
 type HomeDashboardData struct {
-	ListenerName         string           `json:"listener_name"`
-	ListenerIDTag        string           `json:"listener_id_tag"`
-	KYCStatus            string           `json:"kyc_status"`
-	Availability         string           `json:"availability"`
-	TodayEarningsCoins   float64          `json:"today_earnings_coins"`
-	TodayMinutes         int              `json:"today_minutes"`
-	TodayCalls           int              `json:"today_calls"`
-	ThisWeekEarningsCoins float64         `json:"this_week_earnings_coins"`
-	RatingAvg            float64          `json:"rating_avg"`
-	TotalCallsCount      int              `json:"total_calls_count"`
-	RecentCalls          []RecentCallItem `json:"recent_calls"`
+	ListenerName          string           `json:"listener_name"`
+	ListenerIDTag         string           `json:"listener_id_tag"`
+	KYCStatus             string           `json:"kyc_status"`
+	Availability          string           `json:"availability"`
+	TodayEarningsCoins    float64          `json:"today_earnings_coins"`
+	TodayMinutes          int              `json:"today_minutes"`
+	TodayCalls            int              `json:"today_calls"`
+	ThisWeekEarningsCoins float64          `json:"this_week_earnings_coins"`
+	RatingAvg             float64          `json:"rating_avg"`
+	RatingCount           int              `json:"rating_count"`
+	AnswerRatePct         int              `json:"answer_rate_pct"`
+	TotalCallsCount       int              `json:"total_calls_count"`
+	RecentCalls           []RecentCallItem `json:"recent_calls"`
 }
 
 func (s *ListenerService) GetHomeDashboard(ctx context.Context, listenerID uuid.UUID) (*HomeDashboardData, error) {
@@ -233,36 +237,77 @@ func (s *ListenerService) GetHomeDashboard(ctx context.Context, listenerID uuid.
 
 	tag := fmt.Sprintf("TL-P-%05d", (int64(listenerID[0])<<8|int64(listenerID[1]))%99999+1)
 
-	// Fetch recent call sessions for listener
-	recentCalls := []RecentCallItem{
-		{
-			ID:              "call-101",
-			CallerName:      "Akshay",
-			CallerInitial:   "A",
-			DurationMinutes: 12,
-			TimeString:      "6:10 PM",
-			IsRepeatCaller:  true,
-			EarningCoins:    36.0,
-		},
-		{
-			ID:              "call-102",
-			CallerName:      "Rahul",
-			CallerInitial:   "R",
-			DurationMinutes: 8,
-			TimeString:      "5:40 PM",
-			IsRepeatCaller:  false,
-			EarningCoins:    24.0,
-		},
-		{
-			ID:              "call-103",
-			CallerName:      "Vikram",
-			CallerInitial:   "V",
-			DurationMinutes: 21,
-			TimeString:      "4:05 PM",
-			IsRepeatCaller:  false,
-			GiftReceived:    "Rose Gift",
-			EarningCoins:    71.0,
-		},
+	var totalCallsCount, todayCalls, todayMinutes int
+	var todayEarningsMicros, thisWeekEarningsMicros int64
+	var answeredCallsCount, totalIncomingCount int
+
+	_ = s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'ended'),
+			COUNT(*) FILTER (WHERE status = 'ended' AND created_at >= CURRENT_DATE),
+			COALESCE(SUM(duration_seconds) FILTER (WHERE status = 'ended' AND created_at >= CURRENT_DATE), 0) / 60,
+			COALESCE(SUM(listener_earning_micros) FILTER (WHERE status = 'ended' AND created_at >= CURRENT_DATE), 0),
+			COALESCE(SUM(listener_earning_micros) FILTER (WHERE status = 'ended' AND created_at >= date_trunc('week', CURRENT_DATE)), 0),
+			COUNT(*) FILTER (WHERE status IN ('ended', 'accepted')),
+			COUNT(*)
+		FROM call_sessions
+		WHERE listener_id = $1
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(
+		&totalCallsCount,
+		&todayCalls,
+		&todayMinutes,
+		&todayEarningsMicros,
+		&thisWeekEarningsMicros,
+		&answeredCallsCount,
+		&totalIncomingCount,
+	)
+
+	var ratingAvg float64
+	var ratingCount int
+	_ = s.pool.QueryRow(ctx, `
+		SELECT COALESCE(ROUND(AVG(stars)::numeric, 1), 0.0), COUNT(*)
+		FROM (
+			SELECT stars FROM ratings WHERE listener_id = $1 ORDER BY created_at DESC LIMIT 50
+		) r
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&ratingAvg, &ratingCount)
+
+	answerRatePct := 0
+	if totalIncomingCount > 0 {
+		answerRatePct = int(float64(answeredCallsCount) / float64(totalIncomingCount) * 100.0)
+	}
+
+	recentCalls := make([]RecentCallItem, 0)
+	rows, err := s.pool.Query(ctx, `
+		SELECT cs.id, COALESCE(u.display_name, u.name, 'User'), cs.duration_seconds, cs.created_at, cs.listener_earning_micros
+		FROM call_sessions cs
+		LEFT JOIN users u ON u.id = cs.user_id
+		WHERE cs.listener_id = $1 AND cs.status = 'ended'
+		ORDER BY cs.created_at DESC
+		LIMIT 10
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var callID, callerName string
+			var durSec int
+			var createdAt time.Time
+			var earnMicros int64
+			if err := rows.Scan(&callID, &callerName, &durSec, &createdAt, &earnMicros); err == nil {
+				initial := "U"
+				if len(callerName) > 0 {
+					initial = string([]rune(callerName)[0])
+				}
+				recentCalls = append(recentCalls, RecentCallItem{
+					ID:              callID,
+					CallerName:      callerName,
+					CallerInitial:   strings.ToUpper(initial),
+					DurationMinutes: durSec / 60,
+					TimeString:      createdAt.Format("3:04 PM"),
+					IsRepeatCaller:  false,
+					EarningCoins:    float64(earnMicros) / 1000000.0,
+				})
+			}
+		}
 	}
 
 	return &HomeDashboardData{
@@ -270,30 +315,32 @@ func (s *ListenerService) GetHomeDashboard(ctx context.Context, listenerID uuid.
 		ListenerIDTag:         tag,
 		KYCStatus:             profile.KYCStatus,
 		Availability:          profile.Availability,
-		TodayEarningsCoins:    432.0,
-		TodayMinutes:          96,
-		TodayCalls:            8,
-		ThisWeekEarningsCoins: 2840.0,
-		RatingAvg:             profile.RatingAvg,
-		TotalCallsCount:       38,
+		TodayEarningsCoins:    float64(todayEarningsMicros) / 1000000.0,
+		TodayMinutes:          todayMinutes,
+		TodayCalls:            todayCalls,
+		ThisWeekEarningsCoins: float64(thisWeekEarningsMicros) / 1000000.0,
+		RatingAvg:             ratingAvg,
+		RatingCount:           ratingCount,
+		AnswerRatePct:         answerRatePct,
+		TotalCallsCount:       totalCallsCount,
 		RecentCalls:           recentCalls,
 	}, nil
 }
 
 type MilestoneItem struct {
-	ID             string  `json:"id"`
-	Title          string  `json:"title"`
-	Subtitle       string  `json:"subtitle"`
-	RewardCoins    float64 `json:"reward_coins"`
-	IsCompleted    bool    `json:"is_completed"`
-	CurrentProgress int    `json:"current_progress"`
-	TargetProgress  int    `json:"target_progress"`
+	ID              string  `json:"id"`
+	Title           string  `json:"title"`
+	Subtitle        string  `json:"subtitle"`
+	RewardCoins     float64 `json:"reward_coins"`
+	IsCompleted     bool    `json:"is_completed"`
+	CurrentProgress int     `json:"current_progress"`
+	TargetProgress  int     `json:"target_progress"`
 }
 
 type MilestonesHubData struct {
-	ListenerName            string          `json:"listener_name"`
+	ListenerName           string          `json:"listener_name"`
 	WeekOneGuaranteeAmount float64         `json:"week_one_guarantee_amount"`
-	Milestones              []MilestoneItem `json:"milestones"`
+	Milestones             []MilestoneItem `json:"milestones"`
 }
 
 func (s *ListenerService) GetMilestonesHub(ctx context.Context, listenerID uuid.UUID) (*MilestonesHubData, error) {
@@ -304,6 +351,13 @@ func (s *ListenerService) GetMilestonesHub(ctx context.Context, listenerID uuid.
 
 	isKycDone := profile.KYCStatus == "approved"
 
+	var totalMinutes int
+	_ = s.pool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(duration_seconds) FILTER (WHERE status = 'ended'), 0) / 60
+		FROM call_sessions
+		WHERE listener_id = $1
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&totalMinutes)
+
 	return &MilestonesHubData{
 		ListenerName:           profile.Name,
 		WeekOneGuaranteeAmount: 1500.0,
@@ -311,7 +365,7 @@ func (s *ListenerService) GetMilestonesHub(ctx context.Context, listenerID uuid.
 			{
 				ID:              "ms-1",
 				Title:           "Profile & KYC verified",
-				Subtitle:        "Completed 12 Aug",
+				Subtitle:        "Complete identity verification",
 				RewardCoins:     100.0,
 				IsCompleted:     isKycDone,
 				CurrentProgress: 1,
@@ -320,19 +374,19 @@ func (s *ListenerService) GetMilestonesHub(ctx context.Context, listenerID uuid.
 			{
 				ID:              "ms-2",
 				Title:           "Complete 60 minutes of calls",
-				Subtitle:        "18 of 60 minutes done",
+				Subtitle:        fmt.Sprintf("%d of 60 minutes done", totalMinutes),
 				RewardCoins:     300.0,
-				IsCompleted:     false,
-				CurrentProgress: 18,
+				IsCompleted:     totalMinutes >= 60,
+				CurrentProgress: totalMinutes,
 				TargetProgress:  60,
 			},
 			{
 				ID:              "ms-3",
 				Title:           "10 hours in your first 30 days",
-				Subtitle:        "Keeps you visible to more users",
+				Subtitle:        fmt.Sprintf("%d of 10 hours completed", totalMinutes/60),
 				RewardCoins:     500.0,
-				IsCompleted:     false,
-				CurrentProgress: 2,
+				IsCompleted:     totalMinutes >= 600,
+				CurrentProgress: totalMinutes / 60,
 				TargetProgress:  10,
 			},
 			{
@@ -349,27 +403,62 @@ func (s *ListenerService) GetMilestonesHub(ctx context.Context, listenerID uuid.
 }
 
 type PerformanceScoreData struct {
-	Score           int      `json:"score"`
-	Tier            string   `json:"tier"`
-	RankText        string   `json:"rank_text"`
-	RepeatCallersPct int     `json:"repeat_callers_pct"`
-	AnswerRatePct   int      `json:"answer_rate_pct"`
-	RatingScore     float64  `json:"rating_score"`
-	Tips            []string `json:"tips"`
+	Score            int      `json:"score"`
+	Tier             string   `json:"tier"`
+	RankText         string   `json:"rank_text"`
+	RepeatCallersPct int      `json:"repeat_callers_pct"`
+	AnswerRatePct    int      `json:"answer_rate_pct"`
+	RatingScore      float64  `json:"rating_score"`
+	Tips             []string `json:"tips"`
 }
 
 func (s *ListenerService) GetPerformanceScore(ctx context.Context, listenerID uuid.UUID) (*PerformanceScoreData, error) {
+	var totalCallsCount, answeredCallsCount, totalIncomingCount int
+	_ = s.pool.QueryRow(ctx, `
+		SELECT
+			COUNT(*) FILTER (WHERE status = 'ended'),
+			COUNT(*) FILTER (WHERE status IN ('ended', 'accepted')),
+			COUNT(*)
+		FROM call_sessions
+		WHERE listener_id = $1
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&totalCallsCount, &answeredCallsCount, &totalIncomingCount)
+
+	var ratingAvg float64
+	_ = s.pool.QueryRow(ctx, `
+		SELECT COALESCE(ROUND(AVG(stars)::numeric, 1), 0.0)
+		FROM (
+			SELECT stars FROM ratings WHERE listener_id = $1 ORDER BY created_at DESC LIMIT 50
+		) r
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&ratingAvg)
+
+	answerRatePct := 0
+	if totalIncomingCount > 0 {
+		answerRatePct = int(float64(answeredCallsCount) / float64(totalIncomingCount) * 100.0)
+	}
+
+	tier := "BRONZE"
+	score := 0
+	if totalCallsCount > 50 {
+		tier = "GOLD"
+		score = 80 + int(ratingAvg*4)
+	} else if totalCallsCount > 10 {
+		tier = "SILVER"
+		score = 50 + totalCallsCount
+	} else if totalCallsCount > 0 {
+		score = totalCallsCount * 5
+	}
+
 	return &PerformanceScoreData{
-		Score:           82,
-		Tier:            "GOLD",
-		RankText:        "Rank 7 of 54 listeners · updated weekly",
-		RepeatCallersPct: 78,
-		AnswerRatePct:   91,
-		RatingScore:     4.8,
+		Score:            score,
+		Tier:             tier,
+		RankText:         "Updated weekly based on active call hours and rating",
+		RepeatCallersPct: 0,
+		AnswerRatePct:    answerRatePct,
+		RatingScore:      ratingAvg,
 		Tips: []string{
 			"Be online in peak hours (8 PM – midnight): Most calls happen at night. More online hours in peak = more calls sent your way.",
 			"Answer quickly when you're online: Missed calls lower your answer rate. Go offline instead of missing calls.",
-			"Gold listeners earn a higher coin rate: Stay Gold for 4 weeks to unlock the next tier.",
+			"Listeners with high ratings earn more: Complete more calls to increase your rating and tier.",
 		},
 	}, nil
 }
@@ -384,50 +473,48 @@ type PastPayoutItem struct {
 
 type DetailedEarningsData struct {
 	AvailableToWithdrawCoins float64          `json:"available_to_withdraw_coins"`
-	RegisteredUPI           string           `json:"registered_upi"`
-	CallEarningsCoins       float64          `json:"call_earnings_coins"`
-	CallHoursString         string           `json:"call_hours_string"`
-	GiftsReceivedCoins      float64          `json:"gifts_received_coins"`
-	GiftsCountString        string           `json:"gifts_count_string"`
-	GoldTierBonusCoins      float64          `json:"gold_tier_bonus_coins"`
-	TierBonusSubtitle       string           `json:"tier_bonus_subtitle"`
-	PastPayouts             []PastPayoutItem `json:"past_payouts"`
+	RegisteredUPI            string           `json:"registered_upi"`
+	CallEarningsCoins        float64          `json:"call_earnings_coins"`
+	CallHoursString          string           `json:"call_hours_string"`
+	GiftsReceivedCoins       float64          `json:"gifts_received_coins"`
+	GiftsCountString         string           `json:"gifts_count_string"`
+	GoldTierBonusCoins       float64          `json:"gold_tier_bonus_coins"`
+	TierBonusSubtitle        string           `json:"tier_bonus_subtitle"`
+	PastPayouts              []PastPayoutItem `json:"past_payouts"`
 }
 
 func (s *ListenerService) GetDetailedEarnings(ctx context.Context, listenerID uuid.UUID) (*DetailedEarningsData, error) {
-	// Look up registered UPI from kyc_requests if present
-	registeredUPI := "priya@okaxis"
-	var upiRef string
-	_ = s.pool.QueryRow(ctx, "SELECT COALESCE(provider_ref, 'listener@upi') FROM kyc_requests WHERE listener_id = $1 ORDER BY created_at DESC LIMIT 1", pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&upiRef)
-	if upiRef != "" && len(upiRef) > 3 {
-		registeredUPI = upiRef
+	var callEarningsMicros int64
+	var totalSeconds int
+	_ = s.pool.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(listener_earning_micros) FILTER (WHERE status = 'ended'), 0),
+			COALESCE(SUM(duration_seconds) FILTER (WHERE status = 'ended'), 0)
+		FROM call_sessions
+		WHERE listener_id = $1
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&callEarningsMicros, &totalSeconds)
+
+	callCoins := float64(callEarningsMicros) / 1000000.0
+	hours := totalSeconds / 3600
+	mins := (totalSeconds % 3600) / 60
+	callHoursStr := fmt.Sprintf("%d hrs %d min of listening", hours, mins)
+
+	var registeredUPI string
+	_ = s.pool.QueryRow(ctx, "SELECT COALESCE(provider_ref, '') FROM kyc_requests WHERE listener_id = $1 ORDER BY created_at DESC LIMIT 1", pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&registeredUPI)
+	if registeredUPI == "" {
+		registeredUPI = "Not registered yet"
 	}
 
 	return &DetailedEarningsData{
-		AvailableToWithdrawCoins: 2840.0,
-		RegisteredUPI:           registeredUPI,
-		CallEarningsCoins:       2425.0,
-		CallHoursString:         "14 hrs 12 min of listening",
-		GiftsReceivedCoins:      265.0,
-		GiftsCountString:        "11 gifts from 6 users",
-		GoldTierBonusCoins:      150.0,
-		TierBonusSubtitle:       "Rank 7 · week of 18–24 Aug",
-		PastPayouts: []PastPayoutItem{
-			{
-				ID:          "pay-01",
-				Title:       "Withdrawn to UPI",
-				DateString:  "17 Aug · Completed",
-				Status:      "completed",
-				AmountCoins: 3200.0,
-			},
-			{
-				ID:          "pay-02",
-				Title:       "Withdrawn to UPI",
-				DateString:  "10 Aug · Completed",
-				Status:      "completed",
-				AmountCoins: 2750.0,
-			},
-		},
+		AvailableToWithdrawCoins: callCoins,
+		RegisteredUPI:            registeredUPI,
+		CallEarningsCoins:        callCoins,
+		CallHoursString:          callHoursStr,
+		GiftsReceivedCoins:       0.0,
+		GiftsCountString:         "0 gifts received",
+		GoldTierBonusCoins:       0.0,
+		TierBonusSubtitle:        "Tier bonus",
+		PastPayouts:              []PastPayoutItem{},
 	}, nil
 }
 
