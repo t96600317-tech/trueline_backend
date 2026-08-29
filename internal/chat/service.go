@@ -106,7 +106,7 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 					WHEN EXISTS (
 						SELECT 1 FROM call_sessions cs 
 						WHERE cs.user_id = u.id AND cs.status = 'active'
-					) OR u.updated_at > NOW() - INTERVAL '20 seconds' THEN 'online'
+					) OR u.updated_at > NOW() - INTERVAL '60 seconds' THEN 'online'
 					ELSE 'offline'
 				END as user_availability,
 				COALESCE(lm.last_message, '') as last_message,
@@ -236,3 +236,10 @@ func (s *ChatService) SendMessage(ctx context.Context, userID, listenerID uuid.U
 	msg.PartnerID = msg.ListenerID
 	return &msg, nil
 }
+
+func (s *ChatService) TouchUserPresence(ctx context.Context, userID uuid.UUID) {
+	if s.pool != nil {
+		_, _ = s.pool.Exec(ctx, "UPDATE users SET updated_at = NOW() WHERE id = $1", userID)
+	}
+}
+

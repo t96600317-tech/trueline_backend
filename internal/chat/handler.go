@@ -50,6 +50,10 @@ func (h *ChatHandler) ListConversations(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if claims.Role == "user" {
+		h.service.TouchUserPresence(r.Context(), claims.UserID)
+	}
+
 	conversations, err := h.service.ListConversations(r.Context(), claims.UserID, claims.Role)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "CHAT_LIST_FAILED", err.Error())
@@ -77,6 +81,7 @@ func (h *ChatHandler) GetMessages(w http.ResponseWriter, r *http.Request) {
 	if claims.Role == "user" {
 		userID = claims.UserID
 		listenerID = targetID
+		h.service.TouchUserPresence(r.Context(), claims.UserID)
 	} else {
 		userID = targetID
 		listenerID = claims.UserID
@@ -115,6 +120,7 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 	if claims.Role == "user" {
 		userID = claims.UserID
 		listenerID = targetID
+		h.service.TouchUserPresence(r.Context(), claims.UserID)
 	} else {
 		userID = targetID
 		listenerID = claims.UserID
