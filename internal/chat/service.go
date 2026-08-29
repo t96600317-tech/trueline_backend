@@ -102,7 +102,16 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 				COALESCE(NULLIF(u.name, ''), 'user' || (100000 + (abs(hashtext(u.id::text)) % 900000))::text) as user_name,
 				'Caller' as user_title,
 				'' as user_photo_url,
-				'online' as user_availability,
+				CASE 
+					WHEN EXISTS (
+						SELECT 1 FROM chat_messages cm 
+						WHERE cm.user_id = u.id AND cm.created_at > NOW() - INTERVAL '15 minutes'
+					) OR EXISTS (
+						SELECT 1 FROM call_sessions cs 
+						WHERE cs.user_id = u.id AND (cs.status = 'active' OR cs.created_at > NOW() - INTERVAL '15 minutes')
+					) OR u.updated_at > NOW() - INTERVAL '15 minutes' THEN 'online'
+					ELSE 'offline'
+				END as user_availability,
 				COALESCE(lm.last_message, '') as last_message,
 				COALESCE(lm.last_message_sender, '') as last_message_sender,
 				COALESCE(lm.last_message_time, u.created_at) as last_message_time,
