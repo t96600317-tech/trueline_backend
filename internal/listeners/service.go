@@ -595,3 +595,173 @@ func (s *ListenerService) SubmitReport(ctx context.Context, listenerID uuid.UUID
 	return nil
 }
 
+type CallLogHistoryItem struct {
+	ID               string `json:"id"`
+	AvatarText       string `json:"avatar_text"`
+	CallerName       string `json:"caller_name"`
+	IsMissed         bool   `json:"is_missed"`
+	TimestampDetails string `json:"timestamp_details"`
+	AmountStr        string `json:"amount_str"`
+	IsNegative       bool   `json:"is_negative"`
+	IsPeachAvatar    bool   `json:"is_peach_avatar"`
+	Section          string `json:"section"` // "TODAY", "YESTERDAY", "EARLIER"
+	CreatedAt        string `json:"created_at"`
+}
+
+type CallHistoryResponse struct {
+	TotalAnswered  int                  `json:"total_answered"`
+	AvgDurationMin float64              `json:"avg_duration_min"`
+	AvgRating      float64              `json:"avg_rating"`
+	RatingCount    int                  `json:"rating_count"`
+	Calls          []CallLogHistoryItem `json:"calls"`
+}
+
+func (s *ListenerService) GetCallHistory(ctx context.Context, listenerID uuid.UUID) (*CallHistoryResponse, error) {
+	if s.pool == nil {
+		return nil, errors.New("database not connected")
+	}
+
+	var totalAnswered int
+	var avgDurationMin float64
+	var avgRating float64
+	var ratingCount int
+
+	// 1. Stats Query (answered calls count & avg talk time)
+	_ = s.pool.QueryRow(ctx, `
+		SELECT 
+			COUNT(*) FILTER (WHERE status = 'ended' OR started_at IS NOT NULL),
+			COALESCE(ROUND(AVG(
+				CASE 
+					WHEN ended_at IS NOT NULL AND started_at IS NOT NULL THEN EXTRACT(EPOCH FROM (ended_at - started_at)) / 60.0
+					ELSE 0 
+				END
+			) FILTER (WHERE status = 'ended' OR started_at IS NOT NULL)::numeric, 1), 0.0)
+		FROM call_sessions
+		WHERE listener_id = $1
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&totalAnswered, &avgDurationMin)
+
+	// 2. Ratings Query
+	_ = s.pool.QueryRow(ctx, `
+		SELECT COALESCE(ROUND(AVG(stars)::numeric, 1), 0.0), COUNT(*)
+		FROM ratings
+		WHERE listener_id = $1
+	`, pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&avgRating, &ratingCount)
+
+	// 3. Calls list query
+	rows, err := s.pool.Query(ctx, `
+		SELECT 
+			cs.id,
+			COALESCE(NULLIF(u.name, ''), 'user' || (100000 + (abs(hashtext(u.id::text)) % 900000))::text) as caller_name,
+			COALESCE(u.language_pref, 'hi') as caller_lang,
+			cs.status,
+			cs.started_at,
+			cs.ended_at,
+			cs.earning_per_min_micros_snapshot,
+			r.stars,
+			cs.created_at
+		FROM call_sessions cs
+		LEFT JOIN users u ON u.id = cs.user_id
+		LEFT JOIN ratings r ON r.call_session_id = cs.id
+		WHERE cs.listener_id = $1
+		ORDER BY cs.created_at DESC
+		LIMIT 50
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+
+	calls := make([]CallLogHistoryItem, 0)
+	if err == nil {
+		defer rows.Close()
+		now := time.Now()
+		todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		yesterdayStart := todayStart.AddDate(0, 0, -1)
+
+		for rows.Next() {
+			var id, callerName, callerLang, status string
+			var startedAt, endedAt *time.Time
+			var earnPerMinMicros int64
+			var stars *int
+			var createdAt time.Time
+
+			if err := rows.Scan(&id, &callerName, &callerLang, &status, &startedAt, &endedAt, &earnPerMinMicros, &stars, &createdAt); err == nil {
+				isMissed := status == "cancelled" || (startedAt == nil && status != "active")
+
+				section := "EARLIER"
+				if createdAt.After(todayStart) {
+					section = "TODAY"
+				} else if createdAt.After(yesterdayStart) {
+					section = "YESTERDAY"
+				}
+
+				timeStr := createdAt.Format("3:04 PM")
+				var details string
+				var amountStr string
+				var isNegative bool
+				var isPeachAvatar bool
+
+				langName := "Hindi"
+				switch strings.ToLower(callerLang) {
+				case "en":
+					langName = "English"
+				case "bn":
+					langName = "Bengali"
+				case "ta":
+					langName = "Tamil"
+				case "te":
+					langName = "Telugu"
+				case "mr":
+					langName = "Marathi"
+				}
+
+				displayName := callerName + " · " + langName
+				if isMissed {
+					displayName = callerName + " · missed"
+					details = timeStr + " · missed"
+					amountStr = "₹0"
+					isNegative = false
+					isPeachAvatar = true
+				} else {
+					var durSec int
+					if startedAt != nil && endedAt != nil {
+						durSec = int(endedAt.Sub(*startedAt).Seconds())
+					}
+					durM := durSec / 60
+					durS := durSec % 60
+
+					details = fmt.Sprintf("%s · %d min %02d s", timeStr, durM, durS)
+					if stars != nil && *stars > 0 {
+						details += fmt.Sprintf(" · ★ %d", *stars)
+					}
+					earnCoins := (float64(earnPerMinMicros) / 1000000.0) * (float64(durSec) / 60.0)
+					amountStr = fmt.Sprintf("₹%.2f", earnCoins)
+				}
+
+				avatarText := "US"
+				if len(callerName) >= 2 {
+					avatarText = strings.ToUpper(callerName[:2])
+				}
+
+				calls = append(calls, CallLogHistoryItem{
+					ID:               id,
+					AvatarText:       avatarText,
+					CallerName:       displayName,
+					IsMissed:         isMissed,
+					TimestampDetails: details,
+					AmountStr:        amountStr,
+					IsNegative:       isNegative,
+					IsPeachAvatar:    isPeachAvatar,
+					Section:          section,
+					CreatedAt:        createdAt.Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	return &CallHistoryResponse{
+		TotalAnswered:  totalAnswered,
+		AvgDurationMin: avgDurationMin,
+		AvgRating:      avgRating,
+		RatingCount:    ratingCount,
+		Calls:          calls,
+	}, nil
+}
+
+
