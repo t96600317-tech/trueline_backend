@@ -75,6 +75,7 @@ func NewRouter(
 	mux.HandleFunc("GET /api/v1/listener/calls", Chain(listenerHandler.GetCallHistory, authMiddleware, listenerRoleMiddleware))
 	mux.HandleFunc("GET /api/v1/listener/transactions", Chain(listenerHandler.GetTransactions, authMiddleware, listenerRoleMiddleware))
 	mux.HandleFunc("GET /api/v1/listener/notifications", Chain(listenerHandler.GetNotifications, authMiddleware, listenerRoleMiddleware))
+	mux.HandleFunc("POST /api/v1/listener/devices/ios-voip", Chain(callHandler.RegisterIOSVoIPDevice, authMiddleware, listenerRoleMiddleware))
 
 	// 4. Payment Endpoints
 	mux.HandleFunc("GET /api/v1/payments/catalogue", paymentHandler.GetCatalogue)

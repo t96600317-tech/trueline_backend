@@ -27,6 +27,10 @@ type InitiateCallPayload struct {
 	ListenerID string `json:"listener_id"`
 }
 
+type IOSVoIPDevicePayload struct {
+	DeviceToken string `json:"device_token"`
+}
+
 type response struct {
 	Success bool        `json:"success"`
 	Data    interface{} `json:"data,omitempty"`
@@ -95,6 +99,24 @@ func (h *CallHandler) GetIncomingCall(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, inc)
+}
+
+func (h *CallHandler) RegisterIOSVoIPDevice(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil || claims.Role != "listener" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Listener role required")
+		return
+	}
+	var req IOSVoIPDevicePayload
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_JSON", "Failed to parse JSON body")
+		return
+	}
+	if err := h.service.RegisterIOSVoIPDevice(r.Context(), claims.UserID, req.DeviceToken); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_DEVICE_TOKEN", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "iOS VoIP device registered"})
 }
 
 func (h *CallHandler) AcceptCall(w http.ResponseWriter, r *http.Request) {

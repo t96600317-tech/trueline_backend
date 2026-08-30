@@ -17,19 +17,24 @@ import (
 )
 
 type CallService struct {
-	pool          *pgxpool.Pool
-	queries       *db.Queries
-	tokenProvider *ZegoTokenProvider
-	walletService *wallet.WalletService
+	pool             *pgxpool.Pool
+	queries          *db.Queries
+	tokenProvider    *ZegoTokenProvider
+	walletService    *wallet.WalletService
+	incomingNotifier IncomingCallNotifier
 }
 
-func NewCallService(pool *pgxpool.Pool, tp *ZegoTokenProvider, ws *wallet.WalletService) *CallService {
-	return &CallService{
+func NewCallService(pool *pgxpool.Pool, tp *ZegoTokenProvider, ws *wallet.WalletService, notifiers ...IncomingCallNotifier) *CallService {
+	service := &CallService{
 		pool:          pool,
 		queries:       db.New(pool),
 		tokenProvider: tp,
 		walletService: ws,
 	}
+	if len(notifiers) > 0 {
+		service.incomingNotifier = notifiers[0]
+	}
+	return service
 }
 
 type CallInitiateResponse struct {
@@ -154,6 +159,9 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+	if s.incomingNotifier != nil {
+		go s.incomingNotifier.NotifyIncomingCall(context.Background(), listenerID, uuid.UUID(session.ID.Bytes), "Customer")
+	}
 
 	return &CallInitiateResponse{
 		SessionID:             session.ID.String(),
@@ -162,6 +170,28 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 		ZegoUserID:            signedZegoUserID,
 		ZegoConfigFingerprint: s.tokenProvider.ConfigurationFingerprint(),
 	}, nil
+}
+
+func (s *CallService) RegisterIOSVoIPDevice(ctx context.Context, listenerID uuid.UUID, deviceToken string) error {
+	if s.pool == nil {
+		return errors.New("database not connected")
+	}
+	deviceToken = strings.ToLower(strings.TrimSpace(deviceToken))
+	if len(deviceToken) < 32 || len(deviceToken) > 512 {
+		return errors.New("invalid iOS VoIP device token")
+	}
+	for _, char := range deviceToken {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return errors.New("invalid iOS VoIP device token")
+		}
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO listener_ios_voip_devices (listener_id, device_token, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (device_token)
+		DO UPDATE SET listener_id = EXCLUDED.listener_id, updated_at = NOW()
+	`, listenerID, deviceToken)
+	return err
 }
 
 type IncomingCallSession struct {

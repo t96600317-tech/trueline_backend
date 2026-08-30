@@ -22,6 +22,11 @@ type Config struct {
 	JWTSecret                    string
 	ZegoAppID                    string
 	ZegoServerSecret             string
+	APNsTeamID                   string
+	APNsKeyID                    string
+	APNsBundleID                 string
+	APNsPrivateKey               string
+	APNsSandbox                  bool
 	CashfreeClientID             string
 	CashfreeClientSecret         string
 	CashfreeWebhookKey           string
@@ -78,6 +83,11 @@ func LoadConfig() *Config {
 		JWTSecret:                    getEnv("JWT_SECRET", "trueline_default_jwt_secret_change_in_prod"),
 		ZegoAppID:                    getEnv("ZEGO_APP_ID", "123456789"),
 		ZegoServerSecret:             getEnv("ZEGO_SERVER_SECRET", "default_zego_secret"),
+		APNsTeamID:                   getEnv("APNS_TEAM_ID", ""),
+		APNsKeyID:                    getEnv("APNS_KEY_ID", ""),
+		APNsBundleID:                 getEnv("APNS_BUNDLE_ID", ""),
+		APNsPrivateKey:               getEnv("APNS_PRIVATE_KEY", ""),
+		APNsSandbox:                  getEnv("APNS_SANDBOX", "true") == "true",
 		CashfreeClientID:             getEnv("CASHFREE_CLIENT_ID", ""),
 		CashfreeClientSecret:         getEnv("CASHFREE_CLIENT_SECRET", ""),
 		CashfreeWebhookKey:           getEnv("CASHFREE_WEBHOOK_KEY", ""),
