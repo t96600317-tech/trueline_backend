@@ -88,7 +88,7 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 		}
 	}
 
-	if listener.Availability != "online" {
+	if listener.Availability == "offline" {
 		return nil, errors.New("listener is currently offline")
 	}
 

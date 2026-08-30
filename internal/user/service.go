@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 
 	"trueline-backend/internal/db"
@@ -135,6 +136,25 @@ func (s *UserService) ListDiscoverListeners(ctx context.Context, userID uuid.UUI
 
 		listeners = append(listeners, *s.mapListener(l))
 	}
+
+	// Prioritize: online (0) -> busy (1) -> offline (2), then rating desc
+	sort.SliceStable(listeners, func(i, j int) bool {
+		rank := func(avail string) int {
+			switch strings.ToLower(avail) {
+			case "online":
+				return 0
+			case "busy":
+				return 1
+			default:
+				return 2
+			}
+		}
+		rI, rJ := rank(listeners[i].Availability), rank(listeners[j].Availability)
+		if rI != rJ {
+			return rI < rJ
+		}
+		return listeners[i].RatingAvg > listeners[j].RatingAvg
+	})
 
 	return listeners, nil
 }
