@@ -35,7 +35,12 @@ func main() {
 	// Listener: Barkha
 	listenerID := uuid.MustParse("be8f845a-cc8b-4b95-8739-94622762de7f")
 
-	tp := calls.NewZegoTokenProvider("628007464", "e7dffb8a9cb6a89f1fc2afddcc16f4ce4df9cd1e8ca346076161caf69cbd465e")
+	zegoAppID := os.Getenv("ZEGO_APP_ID")
+	zegoServerSecret := os.Getenv("ZEGO_SERVER_SECRET")
+	if zegoAppID == "" || zegoServerSecret == "" {
+		log.Fatal("ZEGO_APP_ID and ZEGO_SERVER_SECRET must be configured")
+	}
+	tp := calls.NewZegoTokenProvider(zegoAppID, zegoServerSecret)
 	ws := wallet.NewWalletService(pool)
 	callSvc := calls.NewCallService(pool, tp, ws)
 

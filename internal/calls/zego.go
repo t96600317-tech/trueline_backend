@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"strconv"
 	"time"
 )
@@ -30,24 +31,40 @@ func NewZegoTokenProvider(appID, serverSecret string) *ZegoTokenProvider {
 type zegoToken04Payload struct {
 	AppID      uint32 `json:"app_id"`
 	UserID     string `json:"user_id"`
-	Nonce      int64  `json:"nonce"`
 	CreateTime int64  `json:"ctime"`
 	ExpireTime int64  `json:"expire"`
+	Nonce      int32  `json:"nonce"`
 	Payload    string `json:"payload"`
 }
 
-// GenerateToken creates an official ZegoCloud Token04 room authentication token
+// GenerateToken creates a ZegoCloud Token04 room authentication token. Its
+// binary envelope and encrypted payload match Zego's server-assistant format.
 func (p *ZegoTokenProvider) GenerateToken(userID, roomID string, duration time.Duration) (string, error) {
-	if p.serverSecret == "" {
-		return "", errors.New("zego server secret is empty")
+	if userID == "" {
+		return "", errors.New("zego user ID is empty")
+	}
+	if roomID == "" {
+		return "", errors.New("zego room ID is empty")
+	}
+	if duration <= 0 {
+		return "", errors.New("zego token duration must be positive")
+	}
+	if len(p.serverSecret) != 32 {
+		return "", errors.New("zego server secret must be exactly 32 bytes")
 	}
 
-	appIDNum, _ := strconv.ParseUint(p.appID, 10, 32)
+	appIDNum, err := strconv.ParseUint(p.appID, 10, 32)
+	if err != nil || appIDNum == 0 {
+		return "", errors.New("zego app ID must be a non-zero unsigned 32-bit integer")
+	}
+
 	now := time.Now().Unix()
 	expire := now + int64(duration.Seconds())
 
-	var nonce int64
-	_ = binary.Read(rand.Reader, binary.BigEndian, &nonce)
+	nonce, err := rand.Int(rand.Reader, big.NewInt(1<<31))
+	if err != nil {
+		return "", fmt.Errorf("failed to generate zego token nonce: %w", err)
+	}
 
 	roomPayload := map[string]interface{}{
 		"room_id": roomID,
@@ -62,9 +79,9 @@ func (p *ZegoTokenProvider) GenerateToken(userID, roomID string, duration time.D
 	tokenData := zegoToken04Payload{
 		AppID:      uint32(appIDNum),
 		UserID:     userID,
-		Nonce:      nonce,
 		CreateTime: now,
 		ExpireTime: expire,
+		Nonce:      int32(nonce.Int64()),
 		Payload:    string(payloadBytes),
 	}
 
@@ -73,20 +90,10 @@ func (p *ZegoTokenProvider) GenerateToken(userID, roomID string, duration time.D
 		return "", fmt.Errorf("failed to encode token data: %w", err)
 	}
 
-	// Pad plainBytes with PKCS7 for AES-CBC
+	// Token04 uses AES-CBC with PKCS#5/#7 padding.
 	padded := pkcs7Pad(plainBytes, aes.BlockSize)
 
-	// Ensure secret is 32 bytes for AES-256 or 16 bytes for AES-128
-	key := []byte(p.serverSecret)
-	if len(key) < 32 {
-		paddedKey := make([]byte, 32)
-		copy(paddedKey, key)
-		key = paddedKey
-	} else if len(key) > 32 {
-		key = key[:32]
-	}
-
-	block, err := aes.NewCipher(key)
+	block, err := aes.NewCipher([]byte(p.serverSecret))
 	if err != nil {
 		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}

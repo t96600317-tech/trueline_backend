@@ -138,6 +138,8 @@ func (c *Config) Validate() error {
 		}
 		if c.ZegoServerSecret == "" || c.ZegoServerSecret == "default_zego_secret" {
 			missing = append(missing, "ZEGO_SERVER_SECRET")
+		} else if len(c.ZegoServerSecret) != 32 {
+			missing = append(missing, "ZEGO_SERVER_SECRET (must be exactly 32 bytes)")
 		}
 		if (c.MSG91WidgetID == "") != (c.MSG91WidgetAuthToken == "") {
 			missing = append(missing, "MSG91_WIDGET_ID and MSG91_WIDGET_AUTH_TOKEN (must be configured together)")

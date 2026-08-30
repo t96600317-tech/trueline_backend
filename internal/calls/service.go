@@ -126,13 +126,14 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	}
 	_, _ = tx.Exec(ctx, "UPDATE listeners SET availability = 'busy', updated_at = NOW() WHERE id = $1", listener.ID)
 
-	if err := tx.Commit(ctx); err != nil {
+	// Generate the Zego credential before committing call state. A bad Zego
+	// configuration must not leave the listener marked busy with no usable call.
+	token, err := s.tokenProvider.GenerateToken(userID.String(), roomID, 1*time.Hour)
+	if err != nil {
 		return nil, err
 	}
 
-	// 7. Generate User Token
-	token, err := s.tokenProvider.GenerateToken(userID.String(), roomID, 1*time.Hour)
-	if err != nil {
+	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 
@@ -210,15 +211,17 @@ func (s *CallService) AcceptCall(ctx context.Context, sessionID, listenerID uuid
 		return nil, fmt.Errorf("call is not in pending state (status: %s)", session.Status)
 	}
 
-	_, err = s.queries.UpdateCallSessionStatus(ctx, db.UpdateCallSessionStatusParams{
-		ID:     session.ID,
-		Status: "active",
-	})
+	// Generate the credential before changing the session state. This keeps a
+	// transient Zego configuration error from accepting an unusable call.
+	token, err := s.tokenProvider.GenerateToken(listenerID.String(), session.RoomID, 1*time.Hour)
 	if err != nil {
 		return nil, err
 	}
 
-	token, err := s.tokenProvider.GenerateToken(listenerID.String(), session.RoomID, 1*time.Hour)
+	_, err = s.queries.UpdateCallSessionStatus(ctx, db.UpdateCallSessionStatusParams{
+		ID:     session.ID,
+		Status: "active",
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -21,4 +21,8 @@ services:
         sync: false # Set in Render Dashboard -> Environment
       - key: JWT_SECRET
         sync: false # Set in Render Dashboard -> Environment
+      - key: ZEGO_APP_ID
+        value: "1939552281"
+      - key: ZEGO_SERVER_SECRET
+        sync: false # Server-only 32-byte ZegoCloud secret; never place in an app
     healthCheckPath: /healthz
