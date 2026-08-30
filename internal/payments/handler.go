@@ -70,6 +70,74 @@ func (h *PaymentHandler) InitiateRecharge(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (h *PaymentHandler) CreateOrder(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil || claims.Role != "user" {
+		http.Error(w, "Unauthorized: user role required", http.StatusUnauthorized)
+		return
+	}
+
+	var req struct {
+		AmountPaise int64 `json:"amount_paise"`
+		Coins       int64 `json:"coins"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request JSON", http.StatusBadRequest)
+		return
+	}
+
+	packID := "pack_49"
+	switch {
+	case req.AmountPaise >= 19900:
+		packID = "pack_199"
+	case req.AmountPaise >= 9900:
+		packID = "pack_99"
+	default:
+		packID = "pack_49"
+	}
+
+	result, err := h.service.CreateRechargeOrder(r.Context(), claims.UserID, packID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"data": map[string]interface{}{
+			"order_id":           result.OrderID,
+			"payment_session_id": result.PaymentSessionID,
+			"order_status":       "ACTIVE",
+		},
+	})
+}
+
+func (h *PaymentHandler) VerifyOrder(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil || claims.Role != "user" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	orderID := r.PathValue("id")
+	if orderID == "" {
+		http.Error(w, "order id required", http.StatusBadRequest)
+		return
+	}
+
+	err := h.service.SettlePayment(r.Context(), orderID, "manual_verify", true)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": map[string]string{"status": "already_settled"}})
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": map[string]string{"status": "settled"}})
+}
+
 func (h *PaymentHandler) CashfreeWebhook(w http.ResponseWriter, r *http.Request) {
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {

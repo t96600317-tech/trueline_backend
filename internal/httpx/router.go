@@ -77,6 +77,8 @@ func NewRouter(
 	// 4. Payment Endpoints
 	mux.HandleFunc("GET /api/v1/payments/catalogue", paymentHandler.GetCatalogue)
 	mux.HandleFunc("POST /api/v1/user/recharge", Chain(paymentHandler.InitiateRecharge, authMiddleware, userRoleMiddleware))
+	mux.HandleFunc("POST /api/v1/payments/create-order", Chain(paymentHandler.CreateOrder, authMiddleware, userRoleMiddleware))
+	mux.HandleFunc("GET /api/v1/payments/orders/{id}/verify", Chain(paymentHandler.VerifyOrder, authMiddleware, userRoleMiddleware))
 	mux.HandleFunc("POST /api/v1/webhooks/cashfree/payments", paymentHandler.CashfreeWebhook)
 
 	// 5. Calling Endpoints

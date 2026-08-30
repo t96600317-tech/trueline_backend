@@ -163,7 +163,7 @@ func (s *CallService) GetIncomingCallForListener(ctx context.Context, listenerID
 		       COALESCE(NULLIF(u.name, ''), 'user' || (100000 + (abs(hashtext(u.id::text)) % 900000))::text) as caller_name,
 		       cs.status,
 		       (COALESCE(cs.rate_per_min_micros_snapshot, 9000000)::float8 / 1000000.0),
-		       (COALESCE(cs.earning_per_min_micros_snapshot, 4500000)::float8 / 1000000.0),
+		       (COALESCE(cs.earning_per_min_micros_snapshot, 3000000)::float8 / 1000000.0),
 		       cs.created_at::text
 		FROM call_sessions cs
 		LEFT JOIN users u ON u.id = cs.user_id
