@@ -28,7 +28,18 @@ func NewListenerService(pool *pgxpool.Pool) *ListenerService {
 	}
 }
 
-var defaultListenerNames = []string{"Barkha", "Akshaya", "Priya", "Ananya", "Sneha", "Kavya", "Tanvi", "Zayan", "Riya", "Aarav", "Meera", "Diya", "Ishaan", "Nisha", "Pooja", "Simran"}
+var defaultListenerNames = []string{
+	"Ahana", "Aira", "Alia", "Aliza", "Amaira", "Amaya", "Anvi", "Arzoi", "Avani", "Aviana",
+	"Avni", "Ayat", "Barkha", "Chahat", "Charvi", "Daksha", "Disha", "Drishti", "Driti", "Elina",
+	"Eva", "Evanya", "Gazal", "Greeshma", "Hiya", "Iba", "Ilisha", "Inara", "Inaya", "Ira",
+	"Ivana", "Jannat", "Jasnoor", "Jiana", "Jiya", "Kainaat", "Kashish", "Khushi", "Kiara", "Kimaya",
+	"Kisha", "Lavanya", "Liana", "Liya", "Mahika", "Mayra", "Meher", "Mihika", "Miraya", "Misha",
+	"Mishka", "Myra", "Navya", "Nayonika", "Nehal", "Nia", "Niharika", "Nikita", "Nisa", "Nisha",
+	"Noya", "Nyra", "Pahel", "Pakhi", "Palak", "Pari", "Parina", "Purva", "Rhea", "Ria",
+	"Rida", "Rimi", "Risha", "Riti", "Riya", "Roshni", "Ruhi", "Saira", "Samaira", "Sanaya",
+	"Sara", "Seher", "Shanaya", "Shina", "Simra", "Siya", "Suhana", "Suhani", "Taara", "Tanisha",
+	"Tanya", "Tara", "Tisha", "Trisha", "Vamika", "Vanya", "Zara", "Zayan", "Zoya", "Zuha",
+}
 
 func getAutoAssignedListenerName(id uuid.UUID) string {
 	idx := int(id[0]^id[1]) % len(defaultListenerNames)
