@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"trueline-backend/internal/db"
@@ -35,6 +36,12 @@ type CallInitiateResponse struct {
 	SessionID string `json:"session_id"`
 	RoomID    string `json:"room_id"`
 	UserToken string `json:"user_token"`
+}
+
+// zegoUserID must match the client-side Zego identity. Both Android apps
+// replace UUID hyphens with underscores before logging into Zego.
+func zegoUserID(userID uuid.UUID) string {
+	return strings.ReplaceAll(userID.String(), "-", "_")
 }
 
 func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.UUID) (*CallInitiateResponse, error) {
@@ -128,7 +135,7 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 
 	// Generate the Zego credential before committing call state. A bad Zego
 	// configuration must not leave the listener marked busy with no usable call.
-	token, err := s.tokenProvider.GenerateToken(userID.String(), roomID, 1*time.Hour)
+	token, err := s.tokenProvider.GenerateToken(zegoUserID(userID), roomID, 1*time.Hour)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +220,7 @@ func (s *CallService) AcceptCall(ctx context.Context, sessionID, listenerID uuid
 
 	// Generate the credential before changing the session state. This keeps a
 	// transient Zego configuration error from accepting an unusable call.
-	token, err := s.tokenProvider.GenerateToken(listenerID.String(), session.RoomID, 1*time.Hour)
+	token, err := s.tokenProvider.GenerateToken(zegoUserID(listenerID), session.RoomID, 1*time.Hour)
 	if err != nil {
 		return nil, err
 	}

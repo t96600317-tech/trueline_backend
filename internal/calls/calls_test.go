@@ -9,7 +9,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+func TestZegoUserIDMatchesAndroidNormalization(t *testing.T) {
+	userID := uuid.MustParse("fd39e827-1e24-4828-b8ed-08dc5a90a2b0")
+
+	if got, want := zegoUserID(userID), "fd39e827_1e24_4828_b8ed_08dc5a90a2b0"; got != want {
+		t.Fatalf("Zego user ID mismatch: got %q, want %q", got, want)
+	}
+}
 
 func TestZegoTokenProvider_GenerateToken04(t *testing.T) {
 	provider := NewZegoTokenProvider("123456789", "0123456789abcdef0123456789abcdef")
