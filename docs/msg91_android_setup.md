@@ -24,9 +24,9 @@ TrueLine. The backend validates that token with MSG91's
 `verifyAccessToken` API before issuing a JWT. The server auth key belongs only
 in the backend environment; do not add it to either Android app or commit it.
 
-TrueLine also reads the verified JWT's phone claim and requires it to match the
-phone number being logged in. This prevents a valid token for one number from
-being used to create a session for another number.
+TrueLine requires the verified MSG91 identifier (from the verification response
+or its JWT) to match the phone number being logged in. This prevents a valid
+token for one number from being used to create a session for another number.
 
 The current TrueLine screens use a six-digit code-entry flow. Leave MSG91
 **invisible verification** disabled in each widget until an automatic sign-in

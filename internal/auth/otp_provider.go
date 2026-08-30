@@ -282,15 +282,29 @@ func (m *MSG91WidgetAccessTokenVerifier) VerifyAccessToken(ctx context.Context, 
 		return fmt.Errorf("MSG91 rejected the access token: %s", result.Message)
 	}
 
-	verifiedPhone, err := msg91PhoneFromVerifiedAccessToken(accessToken)
-	if err != nil {
-		return err
+	verifiedPhone := msg91PhoneFromVerifiedResponse(body)
+	if verifiedPhone == "" {
+		var err error
+		verifiedPhone, err = msg91PhoneFromVerifiedAccessToken(accessToken)
+		if err != nil {
+			return err
+		}
 	}
 	if !sameIndianPhone(verifiedPhone, expectedPhone) {
 		return fmt.Errorf("MSG91 access token was issued for a different phone number")
 	}
 
 	return nil
+}
+
+func msg91PhoneFromVerifiedResponse(body []byte) string {
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	decoder.UseNumber()
+	var response any
+	if err := decoder.Decode(&response); err != nil {
+		return ""
+	}
+	return msg91PhoneInValue(response)
 }
 
 func msg91PhoneFromVerifiedAccessToken(accessToken string) (string, error) {
@@ -310,13 +324,35 @@ func msg91PhoneFromVerifiedAccessToken(accessToken string) (string, error) {
 	if err := decoder.Decode(&claims); err != nil {
 		return "", fmt.Errorf("MSG91 returned an invalid access token")
 	}
-	for _, key := range []string{"mobile", "mobile_number", "phone", "phone_number", "phoneNumber", "identifier"} {
-		if value := msg91StringClaim(claims[key]); value != "" {
-			return value, nil
-		}
+	if value := msg91PhoneInValue(claims); value != "" {
+		return value, nil
 	}
 
 	return "", fmt.Errorf("MSG91 access token did not include a verified phone number")
+}
+
+func msg91PhoneInValue(value any) string {
+	switch value := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"mobile", "mobile_number", "phone", "phone_number", "phoneNumber", "identifier"} {
+			if phone := msg91StringClaim(value[key]); phone != "" {
+				return phone
+			}
+		}
+		for _, nested := range value {
+			if phone := msg91PhoneInValue(nested); phone != "" {
+				return phone
+			}
+		}
+	case []any:
+		for _, nested := range value {
+			if phone := msg91PhoneInValue(nested); phone != "" {
+				return phone
+			}
+		}
+	}
+
+	return ""
 }
 
 func msg91StringClaim(value any) string {
