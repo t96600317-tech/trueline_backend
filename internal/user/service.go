@@ -151,9 +151,11 @@ func (s *UserService) mapUser(u db.UserGenerated) *db.User {
 
 func (s *UserService) mapListener(l db.ListenerGenerated) *db.Listener {
 	var currentCallID *uuid.UUID
+	availability := l.Availability
 	if l.CurrentCallSessionID.Valid {
 		id := uuid.UUID(l.CurrentCallSessionID.Bytes)
 		currentCallID = &id
+		availability = "busy"
 	}
 
 	ratingAvg, _ := l.RatingAvg.Float64Value()
@@ -173,7 +175,7 @@ func (s *UserService) mapListener(l db.ListenerGenerated) *db.Listener {
 		OnboardingStep:       l.OnboardingStep,
 		KYCStatus:            l.KycStatus,
 		Status:               l.Status,
-		Availability:         l.Availability,
+		Availability:         availability,
 		CurrentCallSessionID: currentCallID,
 		CreatedAt:            l.CreatedAt.Time,
 		UpdatedAt:            l.UpdatedAt.Time,

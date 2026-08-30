@@ -186,16 +186,7 @@ func (s *ListenerService) SetAvailability(ctx context.Context, listenerID uuid.U
 		return errors.New("invalid availability: must be 'online', 'busy', or 'offline'")
 	}
 
-	profile, err := s.GetListenerProfile(ctx, listenerID)
-	if err != nil {
-		return err
-	}
-
-	if (availability == "online" || availability == "busy") && profile.KYCStatus != "approved" {
-		return errors.New("cannot go online: KYC verification must be approved by admin first")
-	}
-
-	_, err = s.pool.Exec(ctx, "UPDATE listeners SET availability = $1, updated_at = NOW() WHERE id = $2",
+	_, err := s.pool.Exec(ctx, "UPDATE listeners SET availability = $1, updated_at = NOW() WHERE id = $2",
 		availability, pgtype.UUID{Bytes: listenerID, Valid: true})
 	if err != nil {
 		return err
