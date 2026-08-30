@@ -46,7 +46,9 @@ func NewAPNsVoIPNotifier(
 	if teamID == "" || keyID == "" || bundleID == "" || privateKeyPEM == "" {
 		return nil, errors.New("APNs team ID, key ID, bundle ID, and private key are all required")
 	}
-	decodedPEM := strings.ReplaceAll(strings.TrimSpace(privateKeyPEM), `\\n`, "\n")
+	// Render stores multiline values either as real line breaks or as literal
+	// "\\n" sequences. PEM decoding needs the latter expanded first.
+	decodedPEM := strings.ReplaceAll(strings.TrimSpace(privateKeyPEM), `\n`, "\n")
 	block, _ := pem.Decode([]byte(decodedPEM))
 	if block == nil {
 		return nil, errors.New("APNs private key is not valid PEM")
