@@ -10,7 +10,7 @@ primary_region = "bom" # Mumbai, India region
 [env]
   PORT = "8080"
   ENV = "production"
-  OTP_MOCK_MODE = "true"
+  OTP_MOCK_MODE = "false"
   OTP_PROVIDER = "mock"
 
 [http_service]

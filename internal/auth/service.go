@@ -18,19 +18,21 @@ import (
 )
 
 type AuthService struct {
-	pool         *pgxpool.Pool
-	queries      *db.Queries
-	tokenManager *TokenManager
-	otpProvider  OTPProvider
-	cfg          *config.Config
-	encKey       string
+	pool                       *pgxpool.Pool
+	queries                    *db.Queries
+	tokenManager               *TokenManager
+	otpProvider                OTPProvider
+	widgetOTPVerifiers         map[string]WidgetOTPVerifier
+	widgetAccessTokenVerifiers map[string]WidgetAccessTokenVerifier
+	cfg                        *config.Config
+	encKey                     string
 }
 
 func NewAuthService(pool *pgxpool.Pool, tm *TokenManager, otpProvider OTPProvider, cfg *config.Config) *AuthService {
 	if otpProvider == nil {
 		otpProvider = NewMockOTPProvider()
 	}
-	return &AuthService{
+	service := &AuthService{
 		pool:         pool,
 		queries:      db.New(pool),
 		tokenManager: tm,
@@ -38,6 +40,45 @@ func NewAuthService(pool *pgxpool.Pool, tm *TokenManager, otpProvider OTPProvide
 		cfg:          cfg,
 		encKey:       EnsureKey32(cfg.EncryptionKey),
 	}
+	service.widgetOTPVerifiers = make(map[string]WidgetOTPVerifier)
+	service.widgetAccessTokenVerifiers = make(map[string]WidgetAccessTokenVerifier)
+	if cfg.MSG91WidgetID != "" && cfg.MSG91WidgetAuthToken != "" {
+		verifier := NewMSG91WidgetOTPVerifier(cfg.MSG91WidgetID, cfg.MSG91WidgetAuthToken)
+		service.widgetOTPVerifiers["user"] = verifier
+		service.widgetOTPVerifiers["listener"] = verifier
+	}
+	if cfg.MSG91CustomerWidgetID != "" && cfg.MSG91CustomerWidgetAuthToken != "" {
+		service.widgetOTPVerifiers["user"] = NewMSG91WidgetOTPVerifier(
+			cfg.MSG91CustomerWidgetID,
+			cfg.MSG91CustomerWidgetAuthToken,
+		)
+	}
+	if cfg.MSG91ListenerWidgetID != "" && cfg.MSG91ListenerWidgetAuthToken != "" {
+		service.widgetOTPVerifiers["listener"] = NewMSG91WidgetOTPVerifier(
+			cfg.MSG91ListenerWidgetID,
+			cfg.MSG91ListenerWidgetAuthToken,
+		)
+	}
+	if cfg.MSG91ServerAuthKey != "" {
+		verifier := NewMSG91WidgetAccessTokenVerifier(cfg.MSG91ServerAuthKey)
+		service.widgetAccessTokenVerifiers["user"] = verifier
+		service.widgetAccessTokenVerifiers["listener"] = verifier
+	}
+	if cfg.MSG91CustomerServerAuthKey != "" {
+		service.widgetAccessTokenVerifiers["user"] = NewMSG91WidgetAccessTokenVerifier(cfg.MSG91CustomerServerAuthKey)
+	}
+	if cfg.MSG91ListenerServerAuthKey != "" {
+		service.widgetAccessTokenVerifiers["listener"] = NewMSG91WidgetAccessTokenVerifier(cfg.MSG91ListenerServerAuthKey)
+	}
+	return service
+}
+
+func (s *AuthService) widgetOTPVerifierFor(role string) WidgetOTPVerifier {
+	return s.widgetOTPVerifiers[role]
+}
+
+func (s *AuthService) widgetAccessTokenVerifierFor(role string) WidgetAccessTokenVerifier {
+	return s.widgetAccessTokenVerifiers[role]
 }
 
 type OTPResponse struct {
@@ -63,6 +104,9 @@ func (s *AuthService) RequestOTP(ctx context.Context, phone, role string) (*OTPR
 	}
 	if role != "user" && role != "listener" {
 		return nil, errors.New("role must be either 'user' or 'listener'")
+	}
+	if s.widgetOTPVerifierFor(role) != nil || s.widgetAccessTokenVerifierFor(role) != nil {
+		return nil, errors.New("MSG91 widget OTP requests must be sent from the mobile app")
 	}
 
 	otpCode := "123456"
@@ -127,9 +171,9 @@ func (s *AuthService) RequestOTP(ctx context.Context, phone, role string) (*OTPR
 	return resp, nil
 }
 
-func (s *AuthService) VerifyOTP(ctx context.Context, phone, otpCode, role string) (*AuthVerifyResponse, error) {
-	if phone == "" || otpCode == "" {
-		return nil, errors.New("phone and OTP code are required")
+func (s *AuthService) VerifyOTP(ctx context.Context, phone, otpCode, role, requestID, accessToken string) (*AuthVerifyResponse, error) {
+	if phone == "" {
+		return nil, errors.New("phone number is required")
 	}
 	if role != "user" && role != "listener" {
 		return nil, errors.New("role must be either 'user' or 'listener'")
@@ -145,13 +189,34 @@ func (s *AuthService) VerifyOTP(ctx context.Context, phone, otpCode, role string
 		}
 	}
 
-	if otpCode == "123456" {
-		// Accept test OTP 123456 for all phone numbers
+	if accessToken != "" {
+		verifier := s.widgetAccessTokenVerifierFor(role)
+		if verifier == nil {
+			return nil, errors.New("MSG91 access-token verification is not configured; set MSG91_SERVER_AUTH_KEY")
+		}
+		if err := verifier.VerifyAccessToken(ctx, accessToken, phone); err != nil {
+			return nil, err
+		}
+	} else if verifier := s.widgetAccessTokenVerifierFor(role); verifier != nil {
+		return nil, errors.New("MSG91 access token is required")
+	} else if verifier := s.widgetOTPVerifierFor(role); verifier != nil {
+		if requestID == "" {
+			return nil, errors.New("MSG91 request ID is required")
+		}
+		if otpCode == "" {
+			return nil, errors.New("OTP code is required")
+		}
+		if err := verifier.VerifyOTP(ctx, requestID, otpCode); err != nil {
+			return nil, err
+		}
 	} else if s.cfg.OTPMockMode {
 		if otpCode != "123456" {
 			return nil, errors.New("incorrect OTP code: in development mock mode, the OTP is 123456")
 		}
 	} else if s.pool != nil {
+		if otpCode == "" {
+			return nil, errors.New("OTP code is required")
+		}
 		otpReq, err := s.queries.GetLatestOTP(ctx, db.GetLatestOTPParams{
 			PhoneHash: phoneHash,
 			Role:      role,

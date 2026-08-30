@@ -68,6 +68,14 @@ func main() {
 		otpProvider = auth.NewMockOTPProvider()
 		log.Println("Using Mock SMS OTP Provider (Development)")
 	}
+	if (cfg.MSG91WidgetID != "" && cfg.MSG91WidgetAuthToken != "") ||
+		(cfg.MSG91CustomerWidgetID != "" && cfg.MSG91CustomerWidgetAuthToken != "") ||
+		(cfg.MSG91ListenerWidgetID != "" && cfg.MSG91ListenerWidgetAuthToken != "") ||
+		cfg.MSG91ServerAuthKey != "" ||
+		cfg.MSG91CustomerServerAuthKey != "" ||
+		cfg.MSG91ListenerServerAuthKey != "" {
+		log.Println("Using MSG91 Widget verification for mobile SDK OTP login")
+	}
 
 	authService := auth.NewAuthService(dbPool, tokenManager, otpProvider, cfg)
 	authHandler := auth.NewAuthHandler(authService)

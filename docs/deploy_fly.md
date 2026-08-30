@@ -25,9 +25,14 @@ Set your database and auth secrets using `fly secrets set`:
 fly secrets set \
   DATABASE_URL="postgres://postgres.[ref]:[PASSWORD]@aws-0-ap-south-1.pooler.supabase.com:6543/postgres?sslmode=require" \
   JWT_SECRET="your_production_secure_jwt_secret_key" \
-  OTP_MOCK_MODE="true" \
-  OTP_PROVIDER="mock"
+  OTP_MOCK_MODE="false" \
+  OTP_PROVIDER="mock" \
+  MSG91_SERVER_AUTH_KEY="your-msg91-server-auth-key"
 ```
+
+The Android widget ID and mobile integration tokens stay in each app's ignored
+`local.properties`. The server auth key is the only MSG91 credential required
+by the backend; never place it in `fly.toml`.
 
 ---
 

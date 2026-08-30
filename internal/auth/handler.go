@@ -20,9 +20,11 @@ type OTPRequestPayload struct {
 }
 
 type OTPVerifyPayload struct {
-	Phone string `json:"phone"`
-	OTP   string `json:"otp"`
-	Role  string `json:"role"` // "user" or "listener"
+	Phone       string `json:"phone"`
+	OTP         string `json:"otp"`
+	Role        string `json:"role"` // "user" or "listener"
+	RequestID   string `json:"request_id"`
+	AccessToken string `json:"msg91_access_token"`
 }
 
 type response struct {
@@ -96,7 +98,7 @@ func (h *AuthHandler) VerifyOTP(w http.ResponseWriter, r *http.Request) {
 		req.Role = "user"
 	}
 
-	resp, err := h.service.VerifyOTP(r.Context(), req.Phone, req.OTP, req.Role)
+	resp, err := h.service.VerifyOTP(r.Context(), req.Phone, req.OTP, req.Role, req.RequestID, req.AccessToken)
 	if err != nil {
 		if strings.Contains(err.Error(), "PHONE_BLOCKED") {
 			writeError(w, http.StatusForbidden, "PHONE_BLOCKED", "This phone number has been permanently blocked from accessing TrueLine.")

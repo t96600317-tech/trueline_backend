@@ -12,29 +12,38 @@ import (
 )
 
 type Config struct {
-	Port                 string
-	Env                  string
-	DatabaseURL          string
-	SupabaseURL          string
-	SupabaseAnonKey      string
-	SupabaseServiceKey   string
-	SupabaseBucket       string
-	JWTSecret            string
-	ZegoAppID            string
-	ZegoServerSecret     string
-	CashfreeClientID     string
-	CashfreeClientSecret string
-	CashfreeWebhookKey   string
-	CashfreeSandbox      bool
-	OTPProvider          string // "mock", "twilio", "msg91"
-	OTPMockMode          bool
-	TwilioAccountSID     string
-	TwilioAuthToken      string
-	TwilioFromPhone      string
-	MSG91AuthKey         string
-	MSG91TemplateID      string
-	EncryptionKey        string
-	HMACKey              string
+	Port                         string
+	Env                          string
+	DatabaseURL                  string
+	SupabaseURL                  string
+	SupabaseAnonKey              string
+	SupabaseServiceKey           string
+	SupabaseBucket               string
+	JWTSecret                    string
+	ZegoAppID                    string
+	ZegoServerSecret             string
+	CashfreeClientID             string
+	CashfreeClientSecret         string
+	CashfreeWebhookKey           string
+	CashfreeSandbox              bool
+	OTPProvider                  string // "mock", "twilio", "msg91"
+	OTPMockMode                  bool
+	TwilioAccountSID             string
+	TwilioAuthToken              string
+	TwilioFromPhone              string
+	MSG91AuthKey                 string
+	MSG91TemplateID              string
+	MSG91WidgetID                string
+	MSG91WidgetAuthToken         string
+	MSG91ServerAuthKey           string
+	MSG91CustomerWidgetID        string
+	MSG91CustomerWidgetAuthToken string
+	MSG91CustomerServerAuthKey   string
+	MSG91ListenerWidgetID        string
+	MSG91ListenerWidgetAuthToken string
+	MSG91ListenerServerAuthKey   string
+	EncryptionKey                string
+	HMACKey                      string
 }
 
 func LoadConfig() *Config {
@@ -59,29 +68,38 @@ func LoadConfig() *Config {
 	}
 
 	cfg := &Config{
-		Port:                 getEnv("PORT", "8080"),
-		Env:                  getEnv("ENV", "development"),
-		DatabaseURL:          getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/trueline?sslmode=disable"),
-		SupabaseURL:          getEnv("SUPABASE_URL", ""),
-		SupabaseAnonKey:      getEnv("SUPABASE_ANON_KEY", ""),
-		SupabaseServiceKey:   getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
-		SupabaseBucket:       getEnv("SUPABASE_STORAGE_BUCKET", "kyc-documents"),
-		JWTSecret:            getEnv("JWT_SECRET", "trueline_default_jwt_secret_change_in_prod"),
-		ZegoAppID:            getEnv("ZEGO_APP_ID", "123456789"),
-		ZegoServerSecret:     getEnv("ZEGO_SERVER_SECRET", "default_zego_secret"),
-		CashfreeClientID:     getEnv("CASHFREE_CLIENT_ID", ""),
-		CashfreeClientSecret: getEnv("CASHFREE_CLIENT_SECRET", ""),
-		CashfreeWebhookKey:   getEnv("CASHFREE_WEBHOOK_KEY", ""),
-		CashfreeSandbox:      getEnv("CASHFREE_SANDBOX", "true") == "true",
-		OTPProvider:          getEnv("OTP_PROVIDER", "mock"),
-		OTPMockMode:          getEnv("OTP_MOCK_MODE", "true") == "true",
-		TwilioAccountSID:     getEnv("TWILIO_ACCOUNT_SID", ""),
-		TwilioAuthToken:      getEnv("TWILIO_AUTH_TOKEN", ""),
-		TwilioFromPhone:      getEnv("TWILIO_FROM_PHONE", ""),
-		MSG91AuthKey:         getEnv("MSG91_AUTH_KEY", ""),
-		MSG91TemplateID:      getEnv("MSG91_TEMPLATE_ID", ""),
-		EncryptionKey:        encKey,
-		HMACKey:              getEnv("HMAC_KEY", "trueline_hmac_key_32_bytes_long!"),
+		Port:                         getEnv("PORT", "8080"),
+		Env:                          getEnv("ENV", "development"),
+		DatabaseURL:                  getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/trueline?sslmode=disable"),
+		SupabaseURL:                  getEnv("SUPABASE_URL", ""),
+		SupabaseAnonKey:              getEnv("SUPABASE_ANON_KEY", ""),
+		SupabaseServiceKey:           getEnv("SUPABASE_SERVICE_ROLE_KEY", ""),
+		SupabaseBucket:               getEnv("SUPABASE_STORAGE_BUCKET", "kyc-documents"),
+		JWTSecret:                    getEnv("JWT_SECRET", "trueline_default_jwt_secret_change_in_prod"),
+		ZegoAppID:                    getEnv("ZEGO_APP_ID", "123456789"),
+		ZegoServerSecret:             getEnv("ZEGO_SERVER_SECRET", "default_zego_secret"),
+		CashfreeClientID:             getEnv("CASHFREE_CLIENT_ID", ""),
+		CashfreeClientSecret:         getEnv("CASHFREE_CLIENT_SECRET", ""),
+		CashfreeWebhookKey:           getEnv("CASHFREE_WEBHOOK_KEY", ""),
+		CashfreeSandbox:              getEnv("CASHFREE_SANDBOX", "true") == "true",
+		OTPProvider:                  getEnv("OTP_PROVIDER", "mock"),
+		OTPMockMode:                  getEnv("OTP_MOCK_MODE", "true") == "true",
+		TwilioAccountSID:             getEnv("TWILIO_ACCOUNT_SID", ""),
+		TwilioAuthToken:              getEnv("TWILIO_AUTH_TOKEN", ""),
+		TwilioFromPhone:              getEnv("TWILIO_FROM_PHONE", ""),
+		MSG91AuthKey:                 getEnv("MSG91_AUTH_KEY", ""),
+		MSG91TemplateID:              getEnv("MSG91_TEMPLATE_ID", ""),
+		MSG91WidgetID:                getEnv("MSG91_WIDGET_ID", ""),
+		MSG91WidgetAuthToken:         getEnv("MSG91_WIDGET_AUTH_TOKEN", ""),
+		MSG91ServerAuthKey:           getEnv("MSG91_SERVER_AUTH_KEY", ""),
+		MSG91CustomerWidgetID:        getEnv("MSG91_CUSTOMER_WIDGET_ID", ""),
+		MSG91CustomerWidgetAuthToken: getEnv("MSG91_CUSTOMER_WIDGET_AUTH_TOKEN", ""),
+		MSG91CustomerServerAuthKey:   getEnv("MSG91_CUSTOMER_SERVER_AUTH_KEY", ""),
+		MSG91ListenerWidgetID:        getEnv("MSG91_LISTENER_WIDGET_ID", ""),
+		MSG91ListenerWidgetAuthToken: getEnv("MSG91_LISTENER_WIDGET_AUTH_TOKEN", ""),
+		MSG91ListenerServerAuthKey:   getEnv("MSG91_LISTENER_SERVER_AUTH_KEY", ""),
+		EncryptionKey:                encKey,
+		HMACKey:                      getEnv("HMAC_KEY", "trueline_hmac_key_32_bytes_long!"),
 	}
 
 	return cfg
@@ -90,6 +108,9 @@ func LoadConfig() *Config {
 func (c *Config) Validate() error {
 	if c.Env == "production" || c.Env == "staging" {
 		var missing []string
+		if c.OTPMockMode {
+			missing = append(missing, "OTP_MOCK_MODE must be false outside development")
+		}
 
 		if c.DatabaseURL == "" || strings.Contains(c.DatabaseURL, "localhost") {
 			missing = append(missing, "DATABASE_URL (must not be empty or localhost)")
@@ -117,6 +138,15 @@ func (c *Config) Validate() error {
 		}
 		if c.ZegoServerSecret == "" || c.ZegoServerSecret == "default_zego_secret" {
 			missing = append(missing, "ZEGO_SERVER_SECRET")
+		}
+		if (c.MSG91WidgetID == "") != (c.MSG91WidgetAuthToken == "") {
+			missing = append(missing, "MSG91_WIDGET_ID and MSG91_WIDGET_AUTH_TOKEN (must be configured together)")
+		}
+		if (c.MSG91CustomerWidgetID == "") != (c.MSG91CustomerWidgetAuthToken == "") {
+			missing = append(missing, "MSG91_CUSTOMER_WIDGET_ID and MSG91_CUSTOMER_WIDGET_AUTH_TOKEN (must be configured together)")
+		}
+		if (c.MSG91ListenerWidgetID == "") != (c.MSG91ListenerWidgetAuthToken == "") {
+			missing = append(missing, "MSG91_LISTENER_WIDGET_ID and MSG91_LISTENER_WIDGET_AUTH_TOKEN (must be configured together)")
 		}
 
 		if len(missing) > 0 {

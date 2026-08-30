@@ -12,9 +12,11 @@ services:
       - key: ENV
         value: "production"
       - key: OTP_MOCK_MODE
-        value: "true"
+        value: "false"
       - key: OTP_PROVIDER
         value: "mock"
+      - key: MSG91_SERVER_AUTH_KEY
+        sync: false # Server-side MSG91 access-token verification key; never place in an app
       - key: DATABASE_URL
         sync: false # Set in Render Dashboard -> Environment
       - key: JWT_SECRET
