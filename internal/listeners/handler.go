@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/google/uuid"
 	"trueline-backend/internal/auth"
 )
 
@@ -334,6 +335,37 @@ func (h *ListenerHandler) GetNotifications(w http.ResponseWriter, r *http.Reques
 
 	writeJSON(w, http.StatusOK, data)
 }
+
+func (h *ListenerHandler) NotifyMe(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	if len(parts) < 4 {
+		writeError(w, http.StatusBadRequest, "INVALID_PATH", "Listener ID missing")
+		return
+	}
+	listenerIDStr := parts[3]
+	listenerID, err := uuid.Parse(listenerIDStr)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_UUID", "Invalid listener ID")
+		return
+	}
+
+	if err := h.service.SubscribeNotifyWhenOnline(r.Context(), claims.UserID, listenerID); err != nil {
+		writeError(w, http.StatusInternalServerError, "SUBSCRIBE_FAILED", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"subscribed": true,
+		"message":    "You will be notified as soon as the listener is back online!",
+	})
+}
+
 
 
 

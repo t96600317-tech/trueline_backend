@@ -182,8 +182,8 @@ func (s *ListenerService) SetAvailability(ctx context.Context, listenerID uuid.U
 		return errors.New("database not connected")
 	}
 
-	if availability != "online" && availability != "offline" {
-		return errors.New("invalid availability: must be 'online' or 'offline'")
+	if availability != "online" && availability != "offline" && availability != "busy" {
+		return errors.New("invalid availability: must be 'online', 'busy', or 'offline'")
 	}
 
 	profile, err := s.GetListenerProfile(ctx, listenerID)
@@ -191,12 +191,32 @@ func (s *ListenerService) SetAvailability(ctx context.Context, listenerID uuid.U
 		return err
 	}
 
-	if availability == "online" && profile.KYCStatus != "approved" {
+	if (availability == "online" || availability == "busy") && profile.KYCStatus != "approved" {
 		return errors.New("cannot go online: KYC verification must be approved by admin first")
 	}
 
 	_, err = s.pool.Exec(ctx, "UPDATE listeners SET availability = $1, updated_at = NOW() WHERE id = $2",
 		availability, pgtype.UUID{Bytes: listenerID, Valid: true})
+	if err != nil {
+		return err
+	}
+
+	if availability == "online" {
+		// Mark pending waitlist users as notified
+		_, _ = s.pool.Exec(ctx, "UPDATE listener_waitlist SET notified = TRUE WHERE listener_id = $1 AND notified = FALSE", pgtype.UUID{Bytes: listenerID, Valid: true})
+	}
+
+	return nil
+}
+
+func (s *ListenerService) SubscribeNotifyWhenOnline(ctx context.Context, userID, listenerID uuid.UUID) error {
+	if s.pool == nil {
+		return errors.New("database not connected")
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO listener_waitlist (user_id, listener_id, notified, created_at)
+		VALUES ($1, $2, FALSE, NOW())
+	`, pgtype.UUID{Bytes: userID, Valid: true}, pgtype.UUID{Bytes: listenerID, Valid: true})
 	return err
 }
 

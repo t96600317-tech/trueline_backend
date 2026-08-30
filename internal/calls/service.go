@@ -116,7 +116,7 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
 
-	// 6. Lock listener to this session
+	// 6. Lock listener to this session and mark busy
 	err = qtx.SetListenerCurrentCallSession(ctx, db.SetListenerCurrentCallSessionParams{
 		ID:                   listener.ID,
 		CurrentCallSessionID: session.ID,
@@ -124,6 +124,7 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	if err != nil {
 		return nil, err
 	}
+	_, _ = tx.Exec(ctx, "UPDATE listeners SET availability = 'busy', updated_at = NOW() WHERE id = $1", listener.ID)
 
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
@@ -266,11 +267,13 @@ func (s *CallService) EndCall(ctx context.Context, sessionID uuid.UUID, callerID
 		return err
 	}
 
-	// 2. Clear listener lock
+	// 2. Clear listener lock and revert availability to online
 	err = qtx.ClearListenerCurrentCallSession(ctx, session.ListenerID)
 	if err != nil {
 		return err
 	}
+	_, _ = tx.Exec(ctx, "UPDATE listeners SET availability = 'online', updated_at = NOW() WHERE id = $1 AND availability = 'busy'", session.ListenerID)
+	_, _ = tx.Exec(ctx, "UPDATE listener_waitlist SET notified = TRUE WHERE listener_id = $1 AND notified = FALSE", session.ListenerID)
 
 	return tx.Commit(ctx)
 }
