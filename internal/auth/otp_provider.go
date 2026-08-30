@@ -286,11 +286,18 @@ func (m *MSG91WidgetAccessTokenVerifier) VerifyAccessToken(ctx context.Context, 
 	if verifiedPhone == "" {
 		var err error
 		verifiedPhone, err = msg91PhoneFromVerifiedAccessToken(accessToken)
-		if err != nil {
-			return err
+		if err == nil && sameIndianPhone(verifiedPhone, expectedPhone) {
+			return nil
 		}
 	}
 	if !sameIndianPhone(verifiedPhone, expectedPhone) {
+		if msg91VerifiedArtifactContainsPhone(body, expectedPhone) ||
+			msg91AccessTokenContainsPhone(accessToken, expectedPhone) {
+			return nil
+		}
+		if verifiedPhone == "" {
+			return fmt.Errorf("MSG91 access token did not include a verified phone number")
+		}
 		return fmt.Errorf("MSG91 access token was issued for a different phone number")
 	}
 
@@ -307,28 +314,51 @@ func msg91PhoneFromVerifiedResponse(body []byte) string {
 	return msg91PhoneInValue(response)
 }
 
-func msg91PhoneFromVerifiedAccessToken(accessToken string) (string, error) {
-	parts := strings.Split(accessToken, ".")
-	if len(parts) != 3 {
-		return "", fmt.Errorf("MSG91 returned an invalid access token")
-	}
-
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return "", fmt.Errorf("MSG91 returned an invalid access token")
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(payload))
+func msg91VerifiedArtifactContainsPhone(body []byte, expectedPhone string) bool {
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.UseNumber()
-	var claims map[string]any
-	if err := decoder.Decode(&claims); err != nil {
-		return "", fmt.Errorf("MSG91 returned an invalid access token")
+	var response any
+	if err := decoder.Decode(&response); err != nil {
+		return false
+	}
+	return msg91ValueContainsPhone(response, expectedPhone)
+}
+
+func msg91PhoneFromVerifiedAccessToken(accessToken string) (string, error) {
+	claims, err := msg91AccessTokenClaims(accessToken)
+	if err != nil {
+		return "", err
 	}
 	if value := msg91PhoneInValue(claims); value != "" {
 		return value, nil
 	}
 
 	return "", fmt.Errorf("MSG91 access token did not include a verified phone number")
+}
+
+func msg91AccessTokenContainsPhone(accessToken, expectedPhone string) bool {
+	claims, err := msg91AccessTokenClaims(accessToken)
+	return err == nil && msg91ValueContainsPhone(claims, expectedPhone)
+}
+
+func msg91AccessTokenClaims(accessToken string) (map[string]any, error) {
+	parts := strings.Split(accessToken, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("MSG91 returned an invalid access token")
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("MSG91 returned an invalid access token")
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var claims map[string]any
+	if err := decoder.Decode(&claims); err != nil {
+		return nil, fmt.Errorf("MSG91 returned an invalid access token")
+	}
+	return claims, nil
 }
 
 func msg91PhoneInValue(value any) string {
@@ -353,6 +383,27 @@ func msg91PhoneInValue(value any) string {
 	}
 
 	return ""
+}
+
+func msg91ValueContainsPhone(value any, expectedPhone string) bool {
+	switch value := value.(type) {
+	case string, json.Number:
+		return sameIndianPhone(msg91StringClaim(value), expectedPhone)
+	case map[string]any:
+		for _, nested := range value {
+			if msg91ValueContainsPhone(nested, expectedPhone) {
+				return true
+			}
+		}
+	case []any:
+		for _, nested := range value {
+			if msg91ValueContainsPhone(nested, expectedPhone) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func msg91StringClaim(value any) string {

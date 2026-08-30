@@ -147,6 +147,23 @@ func TestMSG91WidgetAccessTokenVerifier_UsesPhoneFromVerifiedResponse(t *testing
 	}
 }
 
+func TestMSG91WidgetAccessTokenVerifier_MatchesPhoneInCustomVerifiedClaim(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"type":"success","data":{"identity":{"subject":"919876543210"}}}`))
+	}))
+	defer server.Close()
+
+	verifier := NewMSG91WidgetAccessTokenVerifier("server-auth-key")
+	verifier.Endpoint = server.URL
+	verifier.HTTPClient = server.Client()
+	accessToken := testMSG91AccessToken(t, map[string]string{"session_id": "verified-session"})
+
+	if err := verifier.VerifyAccessToken(context.Background(), accessToken, "+919876543210"); err != nil {
+		t.Fatalf("expected custom verified claim to be accepted, got %v", err)
+	}
+}
+
 func TestAuthService_RejectsAccessTokenWhenVerifierIsMissing(t *testing.T) {
 	service := NewAuthService(nil, NewTokenManager("test-secret"), NewMockOTPProvider(), &config.Config{
 		OTPMockMode:   false,
