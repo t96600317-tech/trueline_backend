@@ -33,9 +33,11 @@ func NewCallService(pool *pgxpool.Pool, tp *ZegoTokenProvider, ws *wallet.Wallet
 }
 
 type CallInitiateResponse struct {
-	SessionID string `json:"session_id"`
-	RoomID    string `json:"room_id"`
-	UserToken string `json:"user_token"`
+	SessionID             string `json:"session_id"`
+	RoomID                string `json:"room_id"`
+	UserToken             string `json:"user_token"`
+	ZegoUserID            string `json:"zego_user_id"`
+	ZegoConfigFingerprint string `json:"zego_config_fingerprint"`
 }
 
 type CallSummary struct {
@@ -143,7 +145,8 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 
 	// Generate the Zego credential before committing call state. A bad Zego
 	// configuration must not leave the listener marked busy with no usable call.
-	token, err := s.tokenProvider.GenerateToken(zegoUserID(userID), roomID, 1*time.Hour)
+	signedZegoUserID := zegoUserID(userID)
+	token, err := s.tokenProvider.GenerateToken(signedZegoUserID, roomID, 1*time.Hour)
 	if err != nil {
 		return nil, err
 	}
@@ -153,9 +156,11 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	}
 
 	return &CallInitiateResponse{
-		SessionID: session.ID.String(),
-		RoomID:    roomID,
-		UserToken: token,
+		SessionID:             session.ID.String(),
+		RoomID:                roomID,
+		UserToken:             token,
+		ZegoUserID:            signedZegoUserID,
+		ZegoConfigFingerprint: s.tokenProvider.ConfigurationFingerprint(),
 	}, nil
 }
 
@@ -208,6 +213,7 @@ func (s *CallService) GetIncomingCallForListener(ctx context.Context, listenerID
 type CallAcceptResponse struct {
 	RoomID        string `json:"room_id"`
 	ListenerToken string `json:"listener_token"`
+	ZegoUserID    string `json:"zego_user_id"`
 }
 
 func (s *CallService) AcceptCall(ctx context.Context, sessionID, listenerID uuid.UUID) (*CallAcceptResponse, error) {
@@ -228,7 +234,8 @@ func (s *CallService) AcceptCall(ctx context.Context, sessionID, listenerID uuid
 
 	// Generate the credential before changing the session state. This keeps a
 	// transient Zego configuration error from accepting an unusable call.
-	token, err := s.tokenProvider.GenerateToken(zegoUserID(listenerID), session.RoomID, 1*time.Hour)
+	signedZegoUserID := zegoUserID(listenerID)
+	token, err := s.tokenProvider.GenerateToken(signedZegoUserID, session.RoomID, 1*time.Hour)
 	if err != nil {
 		return nil, err
 	}
@@ -244,6 +251,7 @@ func (s *CallService) AcceptCall(ctx context.Context, sessionID, listenerID uuid
 	return &CallAcceptResponse{
 		RoomID:        session.RoomID,
 		ListenerToken: token,
+		ZegoUserID:    signedZegoUserID,
 	}, nil
 }
 

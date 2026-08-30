@@ -5,8 +5,10 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,6 +28,14 @@ func NewZegoTokenProvider(appID, serverSecret string) *ZegoTokenProvider {
 		appID:        appID,
 		serverSecret: serverSecret,
 	}
+}
+
+// ConfigurationFingerprint identifies the active Zego configuration without
+// revealing the server secret. It is useful when diagnosing a rejected token
+// issued by a remote deployment.
+func (p *ZegoTokenProvider) ConfigurationFingerprint() string {
+	sum := sha256.Sum256([]byte(p.appID + "\x00" + p.serverSecret))
+	return hex.EncodeToString(sum[:8])
 }
 
 type zegoToken04Payload struct {

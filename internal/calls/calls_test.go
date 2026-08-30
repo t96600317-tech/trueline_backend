@@ -102,6 +102,22 @@ func TestZegoTokenProvider_GenerateToken04(t *testing.T) {
 	}
 }
 
+func TestZegoTokenProviderConfigurationFingerprintDoesNotExposeSecret(t *testing.T) {
+	provider := NewZegoTokenProvider("123456789", "0123456789abcdef0123456789abcdef")
+	otherProvider := NewZegoTokenProvider("123456789", "fedcba9876543210fedcba9876543210")
+
+	fingerprint := provider.ConfigurationFingerprint()
+	if len(fingerprint) != 16 {
+		t.Fatalf("expected a short configuration fingerprint, got %q", fingerprint)
+	}
+	if strings.Contains(fingerprint, provider.serverSecret) {
+		t.Fatal("configuration fingerprint must not expose the server secret")
+	}
+	if fingerprint == otherProvider.ConfigurationFingerprint() {
+		t.Fatal("different server secrets must have different configuration fingerprints")
+	}
+}
+
 func TestZegoTokenProviderRejectsInvalidCredentials(t *testing.T) {
 	tests := []struct {
 		name     string
