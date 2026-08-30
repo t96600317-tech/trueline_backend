@@ -319,4 +319,21 @@ func (h *ListenerHandler) GetTransactions(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, data)
 }
 
+func (h *ListenerHandler) GetNotifications(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	data, err := h.service.GetNotifications(r.Context(), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "FETCH_NOTIFICATIONS_FAILED", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, data)
+}
+
+
 

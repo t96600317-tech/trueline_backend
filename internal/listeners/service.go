@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -963,6 +964,225 @@ func (s *ListenerService) GetTransactions(ctx context.Context, listenerID uuid.U
 		Transactions: transactions,
 	}, nil
 }
+
+type NotificationItem struct {
+	ID        string `json:"id"`
+	Type      string `json:"type"`       // "PAYOUT", "BONUS", "RATING", "MISSED_CALL", "KYC"
+	Title     string `json:"title"`      // e.g. "5-Star Rating Received", "Weekly Payout Dispatched"
+	Message   string `json:"message"`    // e.g. "A caller gave you 5 stars!"
+	Timestamp string `json:"timestamp"`  // e.g. "Today, 2:15 PM"
+	IsRead    bool   `json:"is_read"`
+	IconType  string `json:"icon_type"`  // "star", "wallet", "missed_call", "bonus", "shield"
+	CreatedAt string `json:"created_at"`
+}
+
+type NotificationsResponse struct {
+	UnreadCount   int                `json:"unread_count"`
+	Notifications []NotificationItem `json:"notifications"`
+}
+
+func formatNotificationTimestamp(t time.Time) string {
+	now := time.Now()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	yesterdayStart := todayStart.AddDate(0, 0, -1)
+
+	if t.After(todayStart) {
+		return fmt.Sprintf("Today, %s", t.Format("3:04 PM"))
+	} else if t.After(yesterdayStart) {
+		return fmt.Sprintf("Yesterday, %s", t.Format("3:04 PM"))
+	}
+	return t.Format("02 Jan, 3:04 PM")
+}
+
+func (s *ListenerService) GetNotifications(ctx context.Context, listenerID uuid.UUID) (*NotificationsResponse, error) {
+	if s.pool == nil {
+		return nil, errors.New("database not connected")
+	}
+
+	notifications := make([]NotificationItem, 0)
+	now := time.Now()
+
+	// 1. Real Ratings Received
+	ratingRows, rErr := s.pool.Query(ctx, `
+		SELECT r.id, r.stars, COALESCE(r.review_text, ''), r.created_at,
+		       COALESCE(NULLIF(u.name, ''), 'A caller') as caller_name
+		FROM ratings r
+		LEFT JOIN users u ON u.id = r.user_id
+		WHERE r.listener_id = $1
+		ORDER BY r.created_at DESC
+		LIMIT 20
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+	if rErr == nil {
+		defer ratingRows.Close()
+		for ratingRows.Next() {
+			var id, reviewText, callerName string
+			var stars int
+			var createdAt time.Time
+			if err := ratingRows.Scan(&id, &stars, &reviewText, &createdAt, &callerName); err == nil {
+				msg := fmt.Sprintf("%s gave you a %d-star rating for your recent call.", callerName, stars)
+				if reviewText != "" {
+					msg = fmt.Sprintf("%s gave you %d stars: \"%s\"", callerName, stars, reviewText)
+				}
+				notifications = append(notifications, NotificationItem{
+					ID:        "rating_" + id,
+					Type:      "RATING",
+					Title:     fmt.Sprintf("%d-Star Rating Received", stars),
+					Message:   msg,
+					Timestamp: formatNotificationTimestamp(createdAt),
+					IsRead:    now.Sub(createdAt) > 24*time.Hour,
+					IconType:  "star",
+					CreatedAt: createdAt.Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	// 2. Real Missed Calls
+	missedRows, mErr := s.pool.Query(ctx, `
+		SELECT cs.id, 
+		       COALESCE(NULLIF(u.name, ''), 'caller ' || SUBSTRING(REPLACE(cs.user_id::text, '-', ''), 1, 4)) as caller_name,
+		       cs.created_at
+		FROM call_sessions cs
+		LEFT JOIN users u ON u.id = cs.user_id
+		WHERE cs.listener_id = $1 AND (cs.status = 'cancelled' OR (cs.status = 'ended' AND cs.started_at IS NULL))
+		ORDER BY cs.created_at DESC
+		LIMIT 15
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+	if mErr == nil {
+		defer missedRows.Close()
+		for missedRows.Next() {
+			var id, callerName string
+			var createdAt time.Time
+			if err := missedRows.Scan(&id, &callerName, &createdAt); err == nil {
+				notifications = append(notifications, NotificationItem{
+					ID:        "missed_" + id,
+					Type:      "MISSED_CALL",
+					Title:     "Missed Call Alert",
+					Message:   fmt.Sprintf("You missed an incoming call from %s while online. Keep your volume up to not miss earnings!", callerName),
+					Timestamp: formatNotificationTimestamp(createdAt),
+					IsRead:    now.Sub(createdAt) > 24*time.Hour,
+					IconType:  "missed_call",
+					CreatedAt: createdAt.Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	// 3. Real Payout Requests & Transfers
+	payoutRows, pErr := s.pool.Query(ctx, `
+		SELECT id, net_amount_micros, status, upi_id, requested_at, COALESCE(processed_at, requested_at)
+		FROM payout_requests
+		WHERE listener_id = $1
+		ORDER BY requested_at DESC
+		LIMIT 15
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+	if pErr == nil {
+		defer payoutRows.Close()
+		for payoutRows.Next() {
+			var id, status, upiID string
+			var netMicros int64
+			var reqAt, procAt time.Time
+			if err := payoutRows.Scan(&id, &netMicros, &status, &upiID, &reqAt, &procAt); err == nil {
+				maskedUPI := "••••"
+				if len(upiID) > 4 {
+					maskedUPI += upiID[len(upiID)-4:]
+				}
+				amountCoins := float64(netMicros) / 1e6
+
+				if status == "paid" {
+					notifications = append(notifications, NotificationItem{
+						ID:        "payout_" + id,
+						Type:      "PAYOUT",
+						Title:     "Weekly Payout Dispatched",
+						Message:   fmt.Sprintf("₹%.2f has been successfully transferred to your UPI (%s).", amountCoins, maskedUPI),
+						Timestamp: formatNotificationTimestamp(procAt),
+						IsRead:    now.Sub(procAt) > 24*time.Hour,
+						IconType:  "wallet",
+						CreatedAt: procAt.Format(time.RFC3339),
+					})
+				} else {
+					notifications = append(notifications, NotificationItem{
+						ID:        "payout_" + id,
+						Type:      "PAYOUT",
+						Title:     "Payout Request Submitted",
+						Message:   fmt.Sprintf("Your payout request for ₹%.2f to UPI (%s) is processing and will clear within 24 hours.", amountCoins, maskedUPI),
+						Timestamp: formatNotificationTimestamp(reqAt),
+						IsRead:    now.Sub(reqAt) > 24*time.Hour,
+						IconType:  "wallet",
+						CreatedAt: reqAt.Format(time.RFC3339),
+					})
+				}
+			}
+		}
+	}
+
+	// 4. Real Weekly Volume Bonus (500+ min across all callers)
+	bonusRows, bErr := s.pool.Query(ctx, `
+		SELECT date_trunc('week', cs.created_at) as week_start,
+		       COALESCE(SUM(EXTRACT(EPOCH FROM (cs.ended_at - cs.started_at))) / 60, 0) as total_min,
+		       MAX(cs.created_at) as last_call_time
+		FROM call_sessions cs
+		WHERE cs.listener_id = $1 AND cs.status = 'ended' AND cs.started_at IS NOT NULL AND cs.ended_at IS NOT NULL
+		GROUP BY date_trunc('week', cs.created_at)
+		HAVING COALESCE(SUM(EXTRACT(EPOCH FROM (cs.ended_at - cs.started_at))) / 60, 0) >= 500
+		ORDER BY week_start DESC
+		LIMIT 10
+	`, pgtype.UUID{Bytes: listenerID, Valid: true})
+	if bErr == nil {
+		defer bonusRows.Close()
+		for bonusRows.Next() {
+			var weekStart, lastCallTime time.Time
+			var totalMin int64
+			if err := bonusRows.Scan(&weekStart, &totalMin, &lastCallTime); err == nil {
+				notifications = append(notifications, NotificationItem{
+					ID:        "bonus_" + weekStart.Format("20060102"),
+					Type:      "BONUS",
+					Title:     "Weekly Volume Bonus Unlocked!",
+					Message:   fmt.Sprintf("🎉 Congratulations! You achieved %d total minutes this week. ₹150 Weekly Volume Bonus added to your wallet.", totalMin),
+					Timestamp: formatNotificationTimestamp(lastCallTime),
+					IsRead:    now.Sub(lastCallTime) > 24*time.Hour,
+					IconType:  "bonus",
+					CreatedAt: lastCallTime.Format(time.RFC3339),
+				})
+			}
+		}
+	}
+
+	// 5. KYC Status notification
+	var kycStatus string
+	var kycDate time.Time
+	_ = s.pool.QueryRow(ctx, "SELECT kyc_status, updated_at FROM listeners WHERE id = $1", pgtype.UUID{Bytes: listenerID, Valid: true}).Scan(&kycStatus, &kycDate)
+	if kycStatus == "approved" {
+		notifications = append(notifications, NotificationItem{
+			ID:        "kyc_approved",
+			Type:      "KYC",
+			Title:     "KYC Verified & Approved",
+			Message:   "Your identity and bank account documents have been verified. You can take calls and receive weekly payouts.",
+			Timestamp: formatNotificationTimestamp(kycDate),
+			IsRead:    true,
+			IconType:  "shield",
+			CreatedAt: kycDate.Format(time.RFC3339),
+		})
+	}
+
+	// Sort notifications newest first
+	sort.Slice(notifications, func(i, j int) bool {
+		return notifications[i].CreatedAt > notifications[j].CreatedAt
+	})
+
+	unreadCount := 0
+	for _, n := range notifications {
+		if !n.IsRead {
+			unreadCount++
+		}
+	}
+
+	return &NotificationsResponse{
+		UnreadCount:   unreadCount,
+		Notifications: notifications,
+	}, nil
+}
+
 
 
 
