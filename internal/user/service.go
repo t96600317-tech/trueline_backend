@@ -171,7 +171,10 @@ func (s *UserService) mapUser(u db.UserGenerated) *db.User {
 
 func (s *UserService) mapListener(l db.ListenerGenerated) *db.Listener {
 	var currentCallID *uuid.UUID
-	availability := l.Availability
+	availability := strings.ToLower(strings.TrimSpace(l.Availability))
+	if availability == "" {
+		availability = "offline"
+	}
 	if l.CurrentCallSessionID.Valid {
 		id := uuid.UUID(l.CurrentCallSessionID.Bytes)
 		currentCallID = &id
