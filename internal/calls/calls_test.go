@@ -46,25 +46,33 @@ func TestZegoTokenProvider_GenerateToken04(t *testing.T) {
 	}
 
 	expire := int64(binary.BigEndian.Uint64(encoded[:8]))
-	ivLength := int(binary.BigEndian.Uint16(encoded[8:10]))
-	if ivLength != aes.BlockSize || len(encoded) < 10+ivLength+2 {
-		t.Fatalf("unexpected token IV envelope")
+	nonceLength := int(binary.BigEndian.Uint16(encoded[8:10]))
+	if nonceLength != 12 || len(encoded) < 10+nonceLength+2+1 {
+		t.Fatalf("unexpected Token04 nonce envelope")
 	}
-	ivStart := 10
-	cipherLengthStart := ivStart + ivLength
+	nonceStart := 10
+	cipherLengthStart := nonceStart + nonceLength
 	cipherLength := int(binary.BigEndian.Uint16(encoded[cipherLengthStart : cipherLengthStart+2]))
 	cipherStart := cipherLengthStart + 2
-	if cipherLength == 0 || len(encoded) != cipherStart+cipherLength {
+	if cipherLength == 0 || len(encoded) != cipherStart+cipherLength+1 {
 		t.Fatalf("unexpected token ciphertext envelope")
+	}
+	if mode := encoded[len(encoded)-1]; mode != 1 {
+		t.Fatalf("expected AES-GCM Token04 mode byte 1, got %d", mode)
 	}
 
 	block, err := aes.NewCipher([]byte("0123456789abcdef0123456789abcdef"))
 	if err != nil {
 		t.Fatalf("failed to create test cipher: %v", err)
 	}
-	plain := make([]byte, cipherLength)
-	cipher.NewCBCDecrypter(block, encoded[ivStart:cipherLengthStart]).CryptBlocks(plain, encoded[cipherStart:])
-	plain = plain[:len(plain)-int(plain[len(plain)-1])]
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		t.Fatalf("failed to create test GCM: %v", err)
+	}
+	plain, err := gcm.Open(nil, encoded[nonceStart:cipherLengthStart], encoded[cipherStart:cipherStart+cipherLength], nil)
+	if err != nil {
+		t.Fatalf("failed to decrypt Token04 AES-GCM payload: %v", err)
+	}
 
 	var payload zegoToken04Payload
 	if err := json.Unmarshal(plain, &payload); err != nil {

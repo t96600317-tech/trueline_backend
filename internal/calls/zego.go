@@ -90,38 +90,33 @@ func (p *ZegoTokenProvider) GenerateToken(userID, roomID string, duration time.D
 		return "", fmt.Errorf("failed to encode token data: %w", err)
 	}
 
-	// Token04 uses AES-CBC with PKCS#5/#7 padding.
-	padded := pkcs7Pad(plainBytes, aes.BlockSize)
-
 	block, err := aes.NewCipher([]byte(p.serverSecret))
 	if err != nil {
 		return "", fmt.Errorf("failed to create cipher: %w", err)
 	}
 
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return "", fmt.Errorf("failed to generate IV: %w", err)
+	// Token04 is AES-GCM encrypted. AES-CBC was used by obsolete Token04
+	// implementations and produces credentials the current Zego SDK rejects.
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("failed to create GCM cipher: %w", err)
 	}
+	gcmNonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, gcmNonce); err != nil {
+		return "", fmt.Errorf("failed to generate GCM nonce: %w", err)
+	}
+	encrypted := gcm.Seal(nil, gcmNonce, plainBytes, nil)
 
-	mode := cipher.NewCBCEncrypter(block, iv)
-	encrypted := make([]byte, len(padded))
-	mode.CryptBlocks(encrypted, padded)
-
-	// Build Token04 binary buffer:
-	// [8 bytes expire] + [2 bytes IV len] + [16 bytes IV] + [2 bytes content len] + [content bytes]
+	// Build the current Token04 binary envelope, matching Zego's official
+	// server assistant: expiry, nonce, encrypted payload, AES-GCM mode byte.
 	buf := new(bytes.Buffer)
 	_ = binary.Write(buf, binary.BigEndian, expire)
-	_ = binary.Write(buf, binary.BigEndian, uint16(len(iv)))
-	buf.Write(iv)
+	_ = binary.Write(buf, binary.BigEndian, uint16(len(gcmNonce)))
+	buf.Write(gcmNonce)
 	_ = binary.Write(buf, binary.BigEndian, uint16(len(encrypted)))
 	buf.Write(encrypted)
+	_ = binary.Write(buf, binary.BigEndian, uint8(1)) // AES-GCM
 
 	token := fmt.Sprintf("04%s", base64.StdEncoding.EncodeToString(buf.Bytes()))
 	return token, nil
-}
-
-func pkcs7Pad(data []byte, blockSize int) []byte {
-	padding := blockSize - (len(data) % blockSize)
-	padText := bytes.Repeat([]byte{byte(padding)}, padding)
-	return append(data, padText...)
 }
