@@ -35,6 +35,30 @@ type APNsVoIPNotifier struct {
 	httpClient *http.Client
 }
 
+// EnsureIOSVoIPDeviceStore makes the APNs token store available on deployments
+// that predate the 0004 migration. Existing deployments do not run migration
+// files automatically, and these statements are deliberately idempotent.
+func EnsureIOSVoIPDeviceStore(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return errors.New("database is not connected")
+	}
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS listener_ios_voip_devices (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			listener_id UUID NOT NULL REFERENCES listeners(id) ON DELETE CASCADE,
+			device_token TEXT NOT NULL UNIQUE,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS listener_ios_voip_devices_listener_id_idx
+			ON listener_ios_voip_devices(listener_id);
+	`)
+	if err != nil {
+		return fmt.Errorf("ensure iOS VoIP device store: %w", err)
+	}
+	return nil
+}
+
 func NewAPNsVoIPNotifier(
 	pool *pgxpool.Pool,
 	teamID, keyID, bundleID, privateKeyPEM string,

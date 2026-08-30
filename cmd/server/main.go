@@ -114,19 +114,23 @@ func main() {
 	zegoTokenProvider := calls.NewZegoTokenProvider(cfg.ZegoAppID, cfg.ZegoServerSecret)
 	var incomingCallNotifier calls.IncomingCallNotifier
 	if cfg.APNsTeamID != "" || cfg.APNsKeyID != "" || cfg.APNsBundleID != "" || cfg.APNsPrivateKey != "" {
-		notifier, err := calls.NewAPNsVoIPNotifier(
-			dbPool,
-			cfg.APNsTeamID,
-			cfg.APNsKeyID,
-			cfg.APNsBundleID,
-			cfg.APNsPrivateKey,
-			cfg.APNsSandbox,
-		)
-		if err != nil {
+		if err := calls.EnsureIOSVoIPDeviceStore(ctx, dbPool); err != nil {
 			log.Printf("APNs VoIP notifications disabled: %v", err)
 		} else {
-			incomingCallNotifier = notifier
-			log.Println("APNs VoIP incoming-call notifications enabled")
+			notifier, err := calls.NewAPNsVoIPNotifier(
+				dbPool,
+				cfg.APNsTeamID,
+				cfg.APNsKeyID,
+				cfg.APNsBundleID,
+				cfg.APNsPrivateKey,
+				cfg.APNsSandbox,
+			)
+			if err != nil {
+				log.Printf("APNs VoIP notifications disabled: %v", err)
+			} else {
+				incomingCallNotifier = notifier
+				log.Println("APNs VoIP incoming-call notifications enabled")
+			}
 		}
 	}
 	callService := calls.NewCallService(dbPool, zegoTokenProvider, walletService, incomingCallNotifier)
