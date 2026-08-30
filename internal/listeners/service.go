@@ -28,6 +28,16 @@ func NewListenerService(pool *pgxpool.Pool) *ListenerService {
 	}
 }
 
+var defaultListenerNames = []string{"Barkha", "Akshaya", "Priya", "Ananya", "Sneha", "Kavya", "Tanvi", "Zayan", "Riya", "Aarav", "Meera", "Diya", "Ishaan", "Nisha", "Pooja", "Simran"}
+
+func getAutoAssignedListenerName(id uuid.UUID) string {
+	idx := int(id[0]^id[1]) % len(defaultListenerNames)
+	if idx < 0 {
+		idx = -idx
+	}
+	return defaultListenerNames[idx]
+}
+
 func (s *ListenerService) GetListenerProfile(ctx context.Context, listenerID uuid.UUID) (*db.Listener, error) {
 	if s.pool == nil {
 		return nil, errors.New("database not connected")
@@ -41,8 +51,16 @@ func (s *ListenerService) GetListenerProfile(ctx context.Context, listenerID uui
 		return nil, fmt.Errorf("failed to fetch listener: %w", err)
 	}
 
-	return s.mapListener(l), nil
+	res := s.mapListener(l)
+	if res.Name == "" || strings.EqualFold(res.Name, "Listener") {
+		autoName := getAutoAssignedListenerName(listenerID)
+		res.Name = autoName
+		_, _ = s.pool.Exec(ctx, "UPDATE listeners SET name = $1, updated_at = NOW() WHERE id = $2 AND (name = '' OR name = 'Listener')", autoName, pgtype.UUID{Bytes: listenerID, Valid: true})
+	}
+
+	return res, nil
 }
+
 
 type UpdateProfilePayload struct {
 	Name      string   `json:"name"`
