@@ -89,6 +89,7 @@ func NewRouter(
 	mux.HandleFunc("POST /api/v1/calls/initiate", Chain(callHandler.InitiateCall, authMiddleware, userRoleMiddleware))
 	mux.HandleFunc("POST /api/v1/calls/{id}/accept", Chain(callHandler.AcceptCall, authMiddleware, listenerRoleMiddleware))
 	mux.HandleFunc("POST /api/v1/calls/{id}/end", Chain(callHandler.EndCall, authMiddleware))
+	mux.HandleFunc("GET /api/v1/calls/{id}/summary", Chain(callHandler.GetCallSummary, authMiddleware))
 	mux.HandleFunc("POST /api/v1/calls/{id}/rate", Chain(callHandler.RateCall, authMiddleware, userRoleMiddleware))
 	mux.HandleFunc("GET /api/v1/calls/{id}/events", callHandler.HandleCallEventsWS)
 

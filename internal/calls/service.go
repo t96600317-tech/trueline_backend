@@ -38,6 +38,14 @@ type CallInitiateResponse struct {
 	UserToken string `json:"user_token"`
 }
 
+type CallSummary struct {
+	SessionID           string `json:"session_id"`
+	Status              string `json:"status"`
+	DurationSeconds     int64  `json:"duration_seconds"`
+	CoinsDeductedMicros int64  `json:"coins_deducted_micros"`
+	EndReason           string `json:"end_reason"`
+}
+
 // zegoUserID must match the client-side Zego identity. Both Android apps
 // replace UUID hyphens with underscores before logging into Zego.
 func zegoUserID(userID uuid.UUID) string {
@@ -286,6 +294,59 @@ func (s *CallService) EndCall(ctx context.Context, sessionID uuid.UUID, callerID
 	_, _ = tx.Exec(ctx, "UPDATE listener_waitlist SET notified = TRUE WHERE listener_id = $1 AND notified = FALSE", session.ListenerID)
 
 	return tx.Commit(ctx)
+}
+
+// callDurationSeconds is derived from persisted server timestamps so the
+// client never presents a fabricated duration after a call ends.
+func callDurationSeconds(session *db.CallSessionGenerated) int64 {
+	if !session.StartedAt.Valid {
+		return 0
+	}
+
+	endedAt := time.Now()
+	if session.EndedAt.Valid {
+		endedAt = session.EndedAt.Time
+	}
+	duration := int64(endedAt.Sub(session.StartedAt.Time).Seconds())
+	if duration < 0 {
+		return 0
+	}
+	return duration
+}
+
+func (s *CallService) GetCallSummary(ctx context.Context, sessionID, callerID uuid.UUID, callerRole string) (*CallSummary, error) {
+	if s.pool == nil {
+		return nil, errors.New("database not connected")
+	}
+
+	session, err := s.queries.GetCallSessionByID(ctx, pgtype.UUID{Bytes: sessionID, Valid: true})
+	if err != nil {
+		return nil, err
+	}
+	if callerRole != "admin" && session.UserID.Bytes != callerID && session.ListenerID.Bytes != callerID {
+		return nil, errors.New("unauthorized: caller is not a participant in this call")
+	}
+
+	var coinsDeductedMicros int64
+	err = s.pool.QueryRow(ctx, `
+		SELECT COALESCE(-SUM(wl.amount_micros), 0)::BIGINT
+		FROM wallet_ledger wl
+		JOIN wallets w ON w.id = wl.wallet_id
+		WHERE w.user_id = $1
+		  AND wl.reference_id = $2
+		  AND wl.type = 'call_debit'
+	`, session.UserID, sessionID.String()).Scan(&coinsDeductedMicros)
+	if err != nil {
+		return nil, fmt.Errorf("get call charge total: %w", err)
+	}
+
+	return &CallSummary{
+		SessionID:           session.ID.String(),
+		Status:              session.Status,
+		DurationSeconds:     callDurationSeconds(&session),
+		CoinsDeductedMicros: coinsDeductedMicros,
+		EndReason:           session.EndReason.String,
+	}, nil
 }
 
 func (s *CallService) GetSession(ctx context.Context, sessionID uuid.UUID) (*db.CallSessionGenerated, error) {

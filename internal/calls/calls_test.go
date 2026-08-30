@@ -10,7 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"trueline-backend/internal/db"
+
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestZegoUserIDMatchesAndroidNormalization(t *testing.T) {
@@ -18,6 +21,19 @@ func TestZegoUserIDMatchesAndroidNormalization(t *testing.T) {
 
 	if got, want := zegoUserID(userID), "fd39e827_1e24_4828_b8ed_08dc5a90a2b0"; got != want {
 		t.Fatalf("Zego user ID mismatch: got %q, want %q", got, want)
+	}
+}
+
+func TestCallDurationSecondsUsesServerTimestamps(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 30, 12, 0, 0, 0, time.UTC)
+	endedAt := startedAt.Add(95 * time.Second)
+	session := &db.CallSessionGenerated{
+		StartedAt: pgtype.Timestamptz{Time: startedAt, Valid: true},
+		EndedAt:   pgtype.Timestamptz{Time: endedAt, Valid: true},
+	}
+
+	if got, want := callDurationSeconds(session), int64(95); got != want {
+		t.Fatalf("call duration mismatch: got %d, want %d", got, want)
 	}
 }
 

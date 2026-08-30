@@ -151,6 +151,28 @@ func (h *CallHandler) EndCall(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "Call ended"})
 }
 
+func (h *CallHandler) GetCallSummary(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	sessionID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_ID", "Invalid session ID")
+		return
+	}
+
+	summary, err := h.service.GetCallSummary(r.Context(), sessionID, claims.UserID, claims.Role)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "CALL_SUMMARY_FAILED", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, summary)
+}
+
 type RateCallPayload struct {
 	Rating     int      `json:"rating"`
 	Tags       []string `json:"tags"`
