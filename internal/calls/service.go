@@ -17,11 +17,11 @@ import (
 )
 
 type CallService struct {
-	pool             *pgxpool.Pool
-	queries          *db.Queries
-	tokenProvider    *ZegoTokenProvider
-	walletService    *wallet.WalletService
-	incomingNotifier IncomingCallNotifier
+	pool              *pgxpool.Pool
+	queries           *db.Queries
+	tokenProvider     *ZegoTokenProvider
+	walletService     *wallet.WalletService
+	incomingNotifiers []IncomingCallNotifier
 }
 
 func NewCallService(pool *pgxpool.Pool, tp *ZegoTokenProvider, ws *wallet.WalletService, notifiers ...IncomingCallNotifier) *CallService {
@@ -31,9 +31,7 @@ func NewCallService(pool *pgxpool.Pool, tp *ZegoTokenProvider, ws *wallet.Wallet
 		tokenProvider: tp,
 		walletService: ws,
 	}
-	if len(notifiers) > 0 {
-		service.incomingNotifier = notifiers[0]
-	}
+	service.incomingNotifiers = append(service.incomingNotifiers, notifiers...)
 	return service
 }
 
@@ -159,8 +157,10 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
-	if s.incomingNotifier != nil {
-		go s.incomingNotifier.NotifyIncomingCall(context.Background(), listenerID, uuid.UUID(session.ID.Bytes), "Customer")
+	for _, notifier := range s.incomingNotifiers {
+		if notifier != nil {
+			go notifier.NotifyIncomingCall(context.Background(), listenerID, uuid.UUID(session.ID.Bytes), "Customer")
+		}
 	}
 
 	return &CallInitiateResponse{
@@ -170,6 +170,23 @@ func (s *CallService) InitiateCall(ctx context.Context, userID, listenerID uuid.
 		ZegoUserID:            signedZegoUserID,
 		ZegoConfigFingerprint: s.tokenProvider.ConfigurationFingerprint(),
 	}, nil
+}
+
+func (s *CallService) RegisterAndroidFCMDevice(ctx context.Context, listenerID uuid.UUID, deviceToken string) error {
+	if s.pool == nil {
+		return errors.New("database not connected")
+	}
+	deviceToken = strings.TrimSpace(deviceToken)
+	if len(deviceToken) < 32 || len(deviceToken) > 4096 || strings.ContainsAny(deviceToken, " \t\r\n") {
+		return errors.New("invalid Android FCM device token")
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO listener_android_fcm_devices (listener_id, device_token, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (device_token)
+		DO UPDATE SET listener_id = EXCLUDED.listener_id, updated_at = NOW()
+	`, listenerID, deviceToken)
+	return err
 }
 
 func (s *CallService) RegisterIOSVoIPDevice(ctx context.Context, listenerID uuid.UUID, deviceToken string) error {

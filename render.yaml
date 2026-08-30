@@ -35,4 +35,6 @@ services:
         sync: false # APNs .p8 PEM; use literal \n for new lines
       - key: APNS_SANDBOX
         value: "true"
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false # Firebase Admin service-account JSON; server-only Android FCM credential
     healthCheckPath: /healthz

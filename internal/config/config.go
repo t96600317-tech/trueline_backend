@@ -27,6 +27,7 @@ type Config struct {
 	APNsBundleID                 string
 	APNsPrivateKey               string
 	APNsSandbox                  bool
+	FirebaseServiceAccountJSON   string
 	CashfreeClientID             string
 	CashfreeClientSecret         string
 	CashfreeWebhookKey           string
@@ -88,6 +89,7 @@ func LoadConfig() *Config {
 		APNsBundleID:                 getEnv("APNS_BUNDLE_ID", ""),
 		APNsPrivateKey:               getEnv("APNS_PRIVATE_KEY", ""),
 		APNsSandbox:                  getEnv("APNS_SANDBOX", "true") == "true",
+		FirebaseServiceAccountJSON:   getEnv("FIREBASE_SERVICE_ACCOUNT_JSON", ""),
 		CashfreeClientID:             getEnv("CASHFREE_CLIENT_ID", ""),
 		CashfreeClientSecret:         getEnv("CASHFREE_CLIENT_SECRET", ""),
 		CashfreeWebhookKey:           getEnv("CASHFREE_WEBHOOK_KEY", ""),

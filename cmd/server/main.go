@@ -112,7 +112,7 @@ func main() {
 
 	// 5. Calling & Metering
 	zegoTokenProvider := calls.NewZegoTokenProvider(cfg.ZegoAppID, cfg.ZegoServerSecret)
-	var incomingCallNotifier calls.IncomingCallNotifier
+	var incomingCallNotifiers []calls.IncomingCallNotifier
 	if cfg.APNsTeamID != "" || cfg.APNsKeyID != "" || cfg.APNsBundleID != "" || cfg.APNsPrivateKey != "" {
 		if err := calls.EnsureIOSVoIPDeviceStore(ctx, dbPool); err != nil {
 			log.Printf("APNs VoIP notifications disabled: %v", err)
@@ -128,12 +128,25 @@ func main() {
 			if err != nil {
 				log.Printf("APNs VoIP notifications disabled: %v", err)
 			} else {
-				incomingCallNotifier = notifier
+				incomingCallNotifiers = append(incomingCallNotifiers, notifier)
 				log.Println("APNs VoIP incoming-call notifications enabled")
 			}
 		}
 	}
-	callService := calls.NewCallService(dbPool, zegoTokenProvider, walletService, incomingCallNotifier)
+	if cfg.FirebaseServiceAccountJSON != "" {
+		if err := calls.EnsureAndroidFCMDeviceStore(ctx, dbPool); err != nil {
+			log.Printf("Firebase Cloud Messaging disabled: %v", err)
+		} else {
+			notifier, err := calls.NewFCMNotifier(dbPool, cfg.FirebaseServiceAccountJSON)
+			if err != nil {
+				log.Printf("Firebase Cloud Messaging disabled: %v", err)
+			} else {
+				incomingCallNotifiers = append(incomingCallNotifiers, notifier)
+				log.Println("Firebase Cloud Messaging incoming-call notifications enabled")
+			}
+		}
+	}
+	callService := calls.NewCallService(dbPool, zegoTokenProvider, walletService, incomingCallNotifiers...)
 	eventHub := calls.NewEventHub()
 	callHandler := calls.NewCallHandler(callService, eventHub, tokenManager)
 
