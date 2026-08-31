@@ -2,7 +2,6 @@ package calls
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
@@ -52,7 +51,7 @@ func (e *MeteringEngine) Start(ctx context.Context) {
 }
 
 func (e *MeteringEngine) processTicks(ctx context.Context) {
-	query := `SELECT id, user_id, listener_id, rate_per_min_micros_snapshot, earning_per_min_micros_snapshot FROM call_sessions WHERE status = 'active'`
+	query := `SELECT id, rate_per_min_micros_snapshot, started_at FROM call_sessions WHERE status = 'active'`
 	rows, err := e.pool.Query(ctx, query)
 	if err != nil {
 		return
@@ -60,37 +59,33 @@ func (e *MeteringEngine) processTicks(ctx context.Context) {
 	defer rows.Close()
 
 	for rows.Next() {
-		var sessionID, userID, listenerID pgtype.UUID
-		var rateMin, earningMin int64
-		if err := rows.Scan(&sessionID, &userID, &listenerID, &rateMin, &earningMin); err != nil {
+		var sessionID pgtype.UUID
+		var rateMin int64
+		var startedAt pgtype.Timestamptz
+		if err := rows.Scan(&sessionID, &rateMin, &startedAt); err != nil {
 			continue
 		}
-
-		rateSec := rateMin / 60
-		earningSec := earningMin / 60
-
-		go e.billSecond(ctx, sessionID.Bytes, userID.Bytes, listenerID.Bytes, rateSec, earningSec)
+		if !startedAt.Valid {
+			continue
+		}
+		elapsedSeconds := int64(time.Since(startedAt.Time).Seconds())
+		go e.reserveCurrentMinute(ctx, sessionID.Bytes, customerReservationMicros(rateMin, elapsedSeconds))
 	}
 }
 
-func (e *MeteringEngine) billSecond(ctx context.Context, sessionID, userID, listenerID uuid.UUID, rateSec, earningSec int64) {
-	idempotencyKey := fmt.Sprintf("bill_%s_%d", sessionID.String(), time.Now().Unix())
-
-	err := e.walletService.DebitWallet(ctx, userID, rateSec, "call_debit", sessionID.String(), idempotencyKey)
+func (e *MeteringEngine) reserveCurrentMinute(ctx context.Context, sessionID uuid.UUID, targetMicros int64) {
+	err := e.callService.ReserveCustomerCharge(ctx, sessionID, targetMicros)
 	if err != nil {
 		if err.Error() == "insufficient balance" {
-			log.Printf("Metering: Ending call %s due to zero balance", sessionID)
+			log.Printf("Metering: Ending call %s due to insufficient balance for the next rounded minute", sessionID)
 			_ = e.callService.EndCall(ctx, sessionID, uuid.Nil, "system", "low_balance")
-			e.hub.Broadcast(sessionID, map[string]string{"type": "call_ended", "reason": "low_balance"})
 		}
 		return
 	}
 
-	_ = e.earningsService.CreditEarnings(ctx, listenerID, earningSec, sessionID.String(), idempotencyKey, nil)
-
-	// Broadcast balance update (optional: every 5-10 seconds to reduce noise)
+	// The customer wallet changes only when a new minute is reserved.
 	e.hub.Broadcast(sessionID, map[string]interface{}{
-		"type": "balance_updated",
+		"type":       "balance_updated",
 		"session_id": sessionID,
 	})
 }

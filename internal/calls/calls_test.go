@@ -37,6 +37,42 @@ func TestCallDurationSecondsUsesServerTimestamps(t *testing.T) {
 	}
 }
 
+func TestCallBillingRoundsCustomerUpAndKeepsListenerExact(t *testing.T) {
+	const customerRate = int64(9_000_000)
+	const listenerRate = int64(3_000_000)
+
+	tests := []struct {
+		durationSeconds int64
+		customer        int64
+		listener        int64
+	}{
+		{durationSeconds: 0, customer: 0, listener: 0},
+		{durationSeconds: 1, customer: customerRate, listener: 50_000},
+		{durationSeconds: 40, customer: customerRate, listener: 2_000_000},
+		{durationSeconds: 60, customer: customerRate, listener: listenerRate},
+		{durationSeconds: 70, customer: 2 * customerRate, listener: 3_500_000},
+	}
+
+	for _, tt := range tests {
+		if got := customerCallChargeMicros(customerRate, tt.durationSeconds); got != tt.customer {
+			t.Fatalf("customer charge for %ds: got %d, want %d", tt.durationSeconds, got, tt.customer)
+		}
+		if got := listenerCallEarningsMicros(listenerRate, tt.durationSeconds); got != tt.listener {
+			t.Fatalf("listener earning for %ds: got %d, want %d", tt.durationSeconds, got, tt.listener)
+		}
+	}
+}
+
+func TestCustomerReservationPreventsUnfundedNextMinute(t *testing.T) {
+	const rate = int64(9_000_000)
+	if got, want := customerReservationMicros(rate, 0), rate; got != want {
+		t.Fatalf("initial reservation got %d, want %d", got, want)
+	}
+	if got, want := customerReservationMicros(rate, 60), 2*rate; got != want {
+		t.Fatalf("minute-boundary reservation got %d, want %d", got, want)
+	}
+}
+
 func TestZegoTokenProvider_GenerateToken04(t *testing.T) {
 	provider := NewZegoTokenProvider("123456789", "0123456789abcdef0123456789abcdef")
 

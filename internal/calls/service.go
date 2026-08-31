@@ -22,6 +22,13 @@ type CallService struct {
 	tokenProvider     *ZegoTokenProvider
 	walletService     *wallet.WalletService
 	incomingNotifiers []IncomingCallNotifier
+	eventHub          *EventHub
+}
+
+// SetEventHub is deliberately separate from construction so existing command
+// tools can still create a CallService without a WebSocket server.
+func (s *CallService) SetEventHub(hub *EventHub) {
+	s.eventHub = hub
 }
 
 func NewCallService(pool *pgxpool.Pool, tp *ZegoTokenProvider, ws *wallet.WalletService, notifiers ...IncomingCallNotifier) *CallService {
@@ -295,6 +302,13 @@ func (s *CallService) AcceptCall(ctx context.Context, sessionID, listenerID uuid
 		return nil, err
 	}
 
+	// Reserve the first customer minute before returning a usable listener
+	// token. Subsequent minute reservations are performed by MeteringEngine.
+	if err := s.ReserveCustomerCharge(ctx, sessionID, customerReservationMicros(session.RatePerMinMicrosSnapshot, 0)); err != nil {
+		_ = s.EndCall(ctx, sessionID, uuid.Nil, "system", "low_balance")
+		return nil, fmt.Errorf("unable to reserve the first call minute: %w", err)
+	}
+
 	return &CallAcceptResponse{
 		RoomID:        session.RoomID,
 		ListenerToken: token,
@@ -331,13 +345,22 @@ func (s *CallService) EndCall(ctx context.Context, sessionID uuid.UUID, callerID
 		return nil // Already ended
 	}
 
-	// 1. Update session status
-	_, err = qtx.EndCallSession(ctx, db.EndCallSessionParams{
+	wasActive := session.Status == "active"
+
+	// 1. Update the session and settle both append-only ledgers in the same
+	// transaction. This prevents a completed call from having only one side of
+	// its financial record written.
+	endedSession, err := qtx.EndCallSession(ctx, db.EndCallSessionParams{
 		ID:        session.ID,
 		EndReason: pgtype.Text{String: reason, Valid: true},
 	})
 	if err != nil {
 		return err
+	}
+	if wasActive {
+		if err := s.settleCallBillingTx(ctx, tx, endedSession); err != nil {
+			return err
+		}
 	}
 
 	// 2. Clear listener lock and revert availability to online
@@ -348,7 +371,143 @@ func (s *CallService) EndCall(ctx context.Context, sessionID uuid.UUID, callerID
 	_, _ = tx.Exec(ctx, "UPDATE listeners SET availability = 'online', updated_at = NOW() WHERE id = $1 AND availability = 'busy'", session.ListenerID)
 	_, _ = tx.Exec(ctx, "UPDATE listener_waitlist SET notified = TRUE WHERE listener_id = $1 AND notified = FALSE", session.ListenerID)
 
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	if s.eventHub != nil {
+		s.eventHub.Broadcast(sessionID, map[string]string{
+			"type":       "call_ended",
+			"session_id": sessionID.String(),
+			"reason":     reason,
+		})
+	}
+	return nil
+}
+
+// ReserveCustomerCharge guarantees that enough balance is held for the
+// current/next billable customer minute. It only appends call_debit entries;
+// any excess reservation is refunded during final settlement.
+func (s *CallService) ReserveCustomerCharge(ctx context.Context, sessionID uuid.UUID, targetMicros int64) error {
+	if targetMicros <= 0 {
+		return nil
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	session, err := s.queries.WithTx(tx).GetCallSessionByID(ctx, pgtype.UUID{Bytes: sessionID, Valid: true})
+	if err != nil {
+		return err
+	}
+	if session.Status != "active" {
+		return nil
+	}
+	if err := s.adjustCustomerChargeTx(ctx, tx, session, targetMicros); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+func (s *CallService) settleCallBillingTx(ctx context.Context, tx pgx.Tx, session db.CallSessionGenerated) error {
+	durationSeconds := callDurationSeconds(&session)
+	if err := s.adjustCustomerChargeTx(ctx, tx, session, customerCallChargeMicros(session.RatePerMinMicrosSnapshot, durationSeconds)); err != nil {
+		return fmt.Errorf("settle customer call charge: %w", err)
+	}
+	if err := s.adjustListenerEarningsTx(ctx, tx, session, listenerCallEarningsMicros(session.EarningPerMinMicrosSnapshot, durationSeconds)); err != nil {
+		return fmt.Errorf("settle listener call earnings: %w", err)
+	}
+	return nil
+}
+
+func (s *CallService) adjustCustomerChargeTx(ctx context.Context, tx pgx.Tx, session db.CallSessionGenerated, targetMicros int64) error {
+	var currentMicros int64
+	err := tx.QueryRow(ctx, `
+		SELECT COALESCE(-SUM(wl.amount_micros), 0)::BIGINT
+		FROM wallet_ledger wl
+		JOIN wallets w ON w.id = wl.wallet_id
+		WHERE w.user_id = $1 AND wl.reference_id = $2 AND wl.type = 'call_debit'
+	`, session.UserID, session.ID.String()).Scan(&currentMicros)
+	if err != nil {
+		return err
+	}
+
+	var walletID pgtype.UUID
+	var balanceMicros int64
+	err = tx.QueryRow(ctx, `SELECT id, balance_micros FROM wallets WHERE user_id = $1 FOR UPDATE`, session.UserID).Scan(&walletID, &balanceMicros)
+	if err != nil {
+		return err
+	}
+
+	delta := targetMicros - currentMicros
+	if delta == 0 {
+		return nil
+	}
+	if delta > 0 && balanceMicros < delta {
+		return errors.New("insufficient balance")
+	}
+
+	newBalance := balanceMicros - delta // A negative delta is an append-only refund.
+	if _, err := tx.Exec(ctx, `UPDATE wallets SET balance_micros = $2, updated_at = NOW() WHERE id = $1`, walletID, newBalance); err != nil {
+		return err
+	}
+
+	ledgerType := "call_debit"
+	description := "Debit: call_debit"
+	ledgerAmount := -delta
+	if delta < 0 {
+		ledgerType = "refund"
+		description = "Refund: unused rounded call minute"
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO wallet_ledger (wallet_id, type, amount_micros, balance_after_micros, reference_id, idempotency_key, description)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+	`, walletID, ledgerType, ledgerAmount, newBalance, session.ID.String(), fmt.Sprintf("call_charge:%s:%s:%d:%d", session.ID.String(), ledgerType, targetMicros, delta), description)
+	return err
+}
+
+func (s *CallService) adjustListenerEarningsTx(ctx context.Context, tx pgx.Tx, session db.CallSessionGenerated, targetMicros int64) error {
+	// Serialise all earnings changes for this listener before deriving the
+	// ledger balance_after value.
+	if _, err := tx.Exec(ctx, `SELECT id FROM listeners WHERE id = $1 FOR UPDATE`, session.ListenerID); err != nil {
+		return err
+	}
+
+	var currentCallEarnings int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount_micros), 0)::BIGINT
+		FROM earnings_ledger
+		WHERE listener_id = $1 AND reference_id = $2
+	`, session.ListenerID, session.ID.String()).Scan(&currentCallEarnings); err != nil {
+		return err
+	}
+	delta := targetMicros - currentCallEarnings
+	if delta == 0 {
+		return nil
+	}
+
+	var currentBalance int64
+	err := tx.QueryRow(ctx, `
+		SELECT balance_after_micros
+		FROM earnings_ledger
+		WHERE listener_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, session.ListenerID).Scan(&currentBalance)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	ledgerType := "call_credit"
+	if delta < 0 {
+		ledgerType = "refund_debit"
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO earnings_ledger (listener_id, type, amount_micros, balance_after_micros, reference_id, idempotency_key, tax_info)
+		VALUES ($1, $2, $3, $4, $5, $6, '{}'::jsonb)
+	`, session.ListenerID, ledgerType, delta, currentBalance+delta, session.ID.String(), fmt.Sprintf("call_earnings:%s:%d", session.ID.String(), targetMicros))
+	return err
 }
 
 // callDurationSeconds is derived from persisted server timestamps so the
@@ -389,7 +548,7 @@ func (s *CallService) GetCallSummary(ctx context.Context, sessionID, callerID uu
 		JOIN wallets w ON w.id = wl.wallet_id
 		WHERE w.user_id = $1
 		  AND wl.reference_id = $2
-		  AND wl.type = 'call_debit'
+		  AND wl.type IN ('call_debit', 'refund')
 	`, session.UserID, sessionID.String()).Scan(&coinsDeductedMicros)
 	if err != nil {
 		return nil, fmt.Errorf("get call charge total: %w", err)

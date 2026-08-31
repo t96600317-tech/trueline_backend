@@ -200,7 +200,7 @@ func (q *Queries) GetEarningsLedgerByIdempotencyKey(ctx context.Context, idempot
 
 const getListenerEarningsSummary = `-- name: GetListenerEarningsSummary :one
 SELECT
-    COALESCE(SUM(CASE WHEN type = 'call_credit' THEN amount_micros ELSE 0 END), 0)::BIGINT as total_earned,
+    COALESCE(SUM(CASE WHEN type IN ('call_credit', 'refund_debit') THEN amount_micros ELSE 0 END), 0)::BIGINT as total_earned,
     COALESCE(SUM(CASE WHEN type = 'payout' THEN amount_micros ELSE 0 END), 0)::BIGINT as total_paid
 FROM earnings_ledger
 WHERE listener_id = $1

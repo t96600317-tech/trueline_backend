@@ -148,6 +148,7 @@ func main() {
 	}
 	callService := calls.NewCallService(dbPool, zegoTokenProvider, walletService, incomingCallNotifiers...)
 	eventHub := calls.NewEventHub()
+	callService.SetEventHub(eventHub)
 	callHandler := calls.NewCallHandler(callService, eventHub, tokenManager)
 
 	meteringEngine := calls.NewMeteringEngine(dbPool, walletService, earningsService, callService, eventHub)
