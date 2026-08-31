@@ -139,3 +139,37 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, msg)
 }
+
+type registerDeviceRequest struct {
+	DeviceToken string `json:"device_token"`
+}
+
+func (h *ChatHandler) RegisterUserAndroidFCMDevice(w http.ResponseWriter, r *http.Request) {
+	claims, ok := auth.ClaimsFromContext(r.Context())
+	if !ok || claims == nil {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	var req registerDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "Failed to parse request body")
+		return
+	}
+
+	token := strings.TrimSpace(req.DeviceToken)
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "INVALID_REQUEST", "device_token is required")
+		return
+	}
+
+	if err := h.service.RegisterUserAndroidFCMDevice(r.Context(), claims.UserID, token); err != nil {
+		writeError(w, http.StatusInternalServerError, "REGISTRATION_FAILED", err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"registered": true,
+		"platform":   "android-fcm",
+	})
+}

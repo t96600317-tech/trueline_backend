@@ -133,16 +133,20 @@ func main() {
 			}
 		}
 	}
+	var fcmNotifier *calls.FCMNotifier
 	if cfg.FirebaseServiceAccountJSON != "" {
 		if err := calls.EnsureAndroidFCMDeviceStore(ctx, dbPool); err != nil {
 			log.Printf("Firebase Cloud Messaging disabled: %v", err)
+		} else if err := calls.EnsureUserAndroidFCMDeviceStore(ctx, dbPool); err != nil {
+			log.Printf("User FCM device store initialization failed: %v", err)
 		} else {
 			notifier, err := calls.NewFCMNotifier(dbPool, cfg.FirebaseServiceAccountJSON)
 			if err != nil {
 				log.Printf("Firebase Cloud Messaging disabled: %v", err)
 			} else {
+				fcmNotifier = notifier
 				incomingCallNotifiers = append(incomingCallNotifiers, notifier)
-				log.Println("Firebase Cloud Messaging incoming-call notifications enabled")
+				log.Println("Firebase Cloud Messaging incoming-call and chat notifications enabled")
 			}
 		}
 	}
@@ -157,7 +161,7 @@ func main() {
 	adminService := admin.NewAdminService(dbPool, tokenManager, payoutService)
 	adminHandler := admin.NewAdminHandler(adminService)
 
-	chatService := chat.NewChatService(dbPool, walletService)
+	chatService := chat.NewChatService(dbPool, walletService, fcmNotifier)
 	chatHandler := chat.NewChatHandler(chatService)
 
 	// 6. Build HTTP Router

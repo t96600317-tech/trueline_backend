@@ -44,6 +44,27 @@ func EnsureAndroidFCMDeviceStore(ctx context.Context, pool *pgxpool.Pool) error 
 	return nil
 }
 
+func EnsureUserAndroidFCMDeviceStore(ctx context.Context, pool *pgxpool.Pool) error {
+	if pool == nil {
+		return errors.New("database is not connected")
+	}
+	_, err := pool.Exec(ctx, `
+		CREATE TABLE IF NOT EXISTS user_android_fcm_devices (
+			id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+			user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			device_token TEXT NOT NULL UNIQUE,
+			updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+		);
+		CREATE INDEX IF NOT EXISTS user_android_fcm_devices_user_id_idx
+			ON user_android_fcm_devices(user_id);
+	`)
+	if err != nil {
+		return fmt.Errorf("ensure User Android FCM device store: %w", err)
+	}
+	return nil
+}
+
 func NewFCMNotifier(pool *pgxpool.Pool, serviceAccountJSON string) (*FCMNotifier, error) {
 	if pool == nil {
 		return nil, errors.New("database is not connected")
@@ -67,6 +88,9 @@ func NewFCMNotifier(pool *pgxpool.Pool, serviceAccountJSON string) (*FCMNotifier
 }
 
 func (n *FCMNotifier) NotifyIncomingCall(ctx context.Context, listenerID uuid.UUID, sessionID uuid.UUID, callerName string) {
+	if n == nil || n.client == nil || n.pool == nil {
+		return
+	}
 	rows, err := n.pool.Query(ctx, `
 		SELECT device_token
 		FROM listener_android_fcm_devices
@@ -98,5 +122,69 @@ func (n *FCMNotifier) NotifyIncomingCall(ctx context.Context, listenerID uuid.UU
 	}
 	if err := rows.Err(); err != nil {
 		log.Printf("FCM token iteration failed for listener %s: %v", listenerID, err)
+	}
+}
+
+func (n *FCMNotifier) NotifyNewChatMessage(ctx context.Context, recipientID uuid.UUID, senderID uuid.UUID, senderName string, content string, recipientRole string) {
+	if n == nil || n.client == nil || n.pool == nil {
+		return
+	}
+
+	var query string
+	if recipientRole == "listener" {
+		query = `SELECT device_token FROM listener_android_fcm_devices WHERE listener_id = $1`
+	} else {
+		query = `SELECT device_token FROM user_android_fcm_devices WHERE user_id = $1`
+	}
+
+	rows, err := n.pool.Query(ctx, query, recipientID)
+	if err != nil {
+		log.Printf("FCM token lookup failed for chat recipient %s (%s): %v", recipientID, recipientRole, err)
+		return
+	}
+	defer rows.Close()
+
+	title := strings.TrimSpace(senderName)
+	if title == "" {
+		title = "New Message"
+	}
+	bodySnippet := strings.TrimSpace(content)
+	if len(bodySnippet) > 120 {
+		bodySnippet = bodySnippet[:117] + "..."
+	}
+
+	for rows.Next() {
+		var token string
+		if err := rows.Scan(&token); err != nil {
+			continue
+		}
+		_, err := n.client.Send(ctx, &messaging.Message{
+			Token: token,
+			Notification: &messaging.Notification{
+				Title: title,
+				Body:  bodySnippet,
+			},
+			Data: map[string]string{
+				"type":        "new_chat_message",
+				"partner_id":  senderID.String(),
+				"sender_name": title,
+				"content":     content,
+			},
+			Android: &messaging.AndroidConfig{
+				Priority: "high",
+				Notification: &messaging.AndroidNotification{
+					ChannelID:             "true_line_chats",
+					Sound:                 "default",
+					DefaultSound:          true,
+					DefaultVibrateTimings: true,
+				},
+			},
+		})
+		if err != nil {
+			log.Printf("FCM chat notification failed for recipient %s: %v", recipientID, err)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("FCM token iteration failed for chat recipient %s: %v", recipientID, err)
 	}
 }

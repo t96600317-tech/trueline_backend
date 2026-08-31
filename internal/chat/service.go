@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
+	"trueline-backend/internal/calls"
 	"trueline-backend/internal/db"
 	"trueline-backend/internal/wallet"
 
@@ -18,13 +20,15 @@ type ChatService struct {
 	pool          *pgxpool.Pool
 	queries       *db.Queries
 	walletService *wallet.WalletService
+	fcmNotifier   *calls.FCMNotifier
 }
 
-func NewChatService(pool *pgxpool.Pool, ws *wallet.WalletService) *ChatService {
+func NewChatService(pool *pgxpool.Pool, ws *wallet.WalletService, fcm *calls.FCMNotifier) *ChatService {
 	return &ChatService{
 		pool:          pool,
 		queries:       db.New(pool),
 		walletService: ws,
+		fcmNotifier:   fcm,
 	}
 }
 
@@ -250,7 +254,54 @@ func (s *ChatService) SendMessage(ctx context.Context, userID, listenerID uuid.U
 	}
 
 	msg.PartnerID = msg.ListenerID
+
+	// Send FCM push notification asynchronously
+	if s.fcmNotifier != nil {
+		go func() {
+			bgCtx := context.Background()
+			var senderName string
+			if role == "user" {
+				var name string
+				_ = s.pool.QueryRow(bgCtx, `SELECT COALESCE(name, 'User') FROM users WHERE id = $1`, userID).Scan(&name)
+				if name == "" {
+					name = "Caller"
+				}
+				senderName = name
+				s.fcmNotifier.NotifyNewChatMessage(bgCtx, listenerID, userID, senderName, content, "listener")
+			} else {
+				var name string
+				_ = s.pool.QueryRow(bgCtx, `SELECT COALESCE(name, 'Listener') FROM listeners WHERE id = $1`, listenerID).Scan(&name)
+				if name == "" {
+					name = "Listener"
+				}
+				senderName = name
+				s.fcmNotifier.NotifyNewChatMessage(bgCtx, userID, listenerID, senderName, content, "user")
+			}
+		}()
+	}
+
 	return &msg, nil
+}
+
+func (s *ChatService) RegisterUserAndroidFCMDevice(ctx context.Context, userID uuid.UUID, deviceToken string) error {
+	if s.pool == nil {
+		return errors.New("database not connected")
+	}
+	token := strings.TrimSpace(deviceToken)
+	if token == "" {
+		return errors.New("device token cannot be empty")
+	}
+
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO user_android_fcm_devices (user_id, device_token, updated_at)
+		VALUES ($1, $2, NOW())
+		ON CONFLICT (device_token)
+		DO UPDATE SET user_id = EXCLUDED.user_id, updated_at = NOW()
+	`, userID, token)
+	if err != nil {
+		return fmt.Errorf("register user android fcm device: %w", err)
+	}
+	return nil
 }
 
 func (s *ChatService) TouchUserPresence(ctx context.Context, userID uuid.UUID) {

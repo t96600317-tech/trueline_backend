@@ -114,6 +114,7 @@ func NewRouter(
 	mux.HandleFunc("GET /api/v1/chat/conversations", Chain(chatHandler.ListConversations, authMiddleware))
 	mux.HandleFunc("GET /api/v1/chat/conversations/{id}/messages", Chain(chatHandler.GetMessages, authMiddleware))
 	mux.HandleFunc("POST /api/v1/chat/conversations/{id}/messages", Chain(chatHandler.SendMessage, authMiddleware))
+	mux.HandleFunc("POST /api/v1/user/devices/android-fcm", Chain(chatHandler.RegisterUserAndroidFCMDevice, authMiddleware, userRoleMiddleware))
 
 	return mux
 }
