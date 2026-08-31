@@ -3,6 +3,7 @@ package chat
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"trueline-backend/internal/auth"
 
@@ -128,6 +129,10 @@ func (h *ChatHandler) SendMessage(w http.ResponseWriter, r *http.Request) {
 
 	msg, err := h.service.SendMessage(r.Context(), userID, listenerID, claims.Role, req.Content)
 	if err != nil {
+		if strings.Contains(err.Error(), "insufficient balance") {
+			writeError(w, http.StatusPaymentRequired, "INSUFFICIENT_BALANCE", err.Error())
+			return
+		}
 		writeError(w, http.StatusBadRequest, "SEND_FAILED", err.Error())
 		return
 	}

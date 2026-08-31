@@ -59,7 +59,7 @@ func setupTestRouter() (*http.ServeMux, *auth.TokenManager) {
 	adminService := admin.NewAdminService(nil, tm, payoutService)
 	adminHandler := admin.NewAdminHandler(adminService)
 
-	chatService := chat.NewChatService(nil)
+	chatService := chat.NewChatService(nil, walletService)
 	chatHandler := chat.NewChatHandler(chatService)
 
 	router := NewRouter(

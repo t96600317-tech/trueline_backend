@@ -59,7 +59,7 @@ func main() {
 	lrows.Close()
 
 	fmt.Println("\n=== 3. CHAT SERVICE ListConversations FOR ALL ACTIVE LISTENERS ===")
-	chatSvc := chat.NewChatService(pool)
+	chatSvc := chat.NewChatService(pool, nil)
 	lrows2, _ := pool.Query(ctx, `SELECT id, name FROM listeners WHERE status = 'active'`)
 	for lrows2.Next() {
 		var lid, lname string

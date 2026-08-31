@@ -6,20 +6,25 @@ import (
 	"fmt"
 
 	"trueline-backend/internal/db"
+	"trueline-backend/internal/wallet"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+const ChatMessageCostMicros int64 = 300_000 // 0.3 coins per message
+
 type ChatService struct {
-	pool    *pgxpool.Pool
-	queries *db.Queries
+	pool          *pgxpool.Pool
+	queries       *db.Queries
+	walletService *wallet.WalletService
 }
 
-func NewChatService(pool *pgxpool.Pool) *ChatService {
+func NewChatService(pool *pgxpool.Pool, ws *wallet.WalletService) *ChatService {
 	return &ChatService{
-		pool:    pool,
-		queries: db.New(pool),
+		pool:          pool,
+		queries:       db.New(pool),
+		walletService: ws,
 	}
 }
 
@@ -219,13 +224,24 @@ func (s *ChatService) SendMessage(ctx context.Context, userID, listenerID uuid.U
 		return nil, errors.New("database not connected")
 	}
 
+	msgID := uuid.New()
+
+	// If message is from a user, deduct 0.3 coins (300,000 micros)
+	if role == "user" && s.walletService != nil {
+		idempotencyKey := fmt.Sprintf("chat_msg_%s", msgID.String())
+		err := s.walletService.DebitWallet(ctx, userID, ChatMessageCostMicros, "chat_message", msgID.String(), idempotencyKey)
+		if err != nil {
+			return nil, fmt.Errorf("insufficient balance: message costs 0.3 coins")
+		}
+	}
+
 	var msg db.ChatMessage
 	query := `
-		INSERT INTO chat_messages (user_id, listener_id, sender_type, content)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO chat_messages (id, user_id, listener_id, sender_type, content)
+		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, user_id, listener_id, sender_type, content, moderation_status, read_at, created_at
 	`
-	err := s.pool.QueryRow(ctx, query, userID, listenerID, role, content).Scan(
+	err := s.pool.QueryRow(ctx, query, msgID, userID, listenerID, role, content).Scan(
 		&msg.ID, &msg.UserID, &msg.ListenerID, &msg.SenderType,
 		&msg.Content, &msg.ModerationStatus, &msg.ReadAt, &msg.CreatedAt,
 	)

@@ -156,7 +156,7 @@ func main() {
 	adminService := admin.NewAdminService(dbPool, tokenManager, payoutService)
 	adminHandler := admin.NewAdminHandler(adminService)
 
-	chatService := chat.NewChatService(dbPool)
+	chatService := chat.NewChatService(dbPool, walletService)
 	chatHandler := chat.NewChatHandler(chatService)
 
 	// 6. Build HTTP Router

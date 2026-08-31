@@ -8,7 +8,7 @@ import (
 )
 
 func TestChatService_NilPoolValidation(t *testing.T) {
-	service := NewChatService(nil)
+	service := NewChatService(nil, nil)
 	ctx := context.Background()
 
 	userID := uuid.New()
