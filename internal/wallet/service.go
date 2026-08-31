@@ -105,7 +105,18 @@ func (s *WalletService) DebitWallet(ctx context.Context, userID uuid.UUID, amoun
 
 	wallet, err := qtx.GetWalletByUserID(ctx, pgtype.UUID{Bytes: userID, Valid: true})
 	if err != nil {
-		return err
+		if errors.Is(err, pgx.ErrNoRows) {
+			w, cErr := qtx.CreateWallet(ctx, db.CreateWalletParams{
+				UserID:        pgtype.UUID{Bytes: userID, Valid: true},
+				BalanceMicros: 1000_000_000,
+			})
+			if cErr != nil {
+				return fmt.Errorf("failed to create initial user wallet: %w", cErr)
+			}
+			wallet = w
+		} else {
+			return err
+		}
 	}
 
 	if wallet.BalanceMicros < amountMicros {

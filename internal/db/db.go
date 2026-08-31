@@ -71,6 +71,8 @@ func ConnectSupabaseDB(ctx context.Context, databaseURL string) (*Database, erro
 
 	// Use simple query protocol (QueryExecModeExec) for PgBouncer / Supabase Transaction Mode compatibility
 	config.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeExec
+	config.ConnConfig.StatementCacheCapacity = 0
+	config.ConnConfig.DescriptionCacheCapacity = 0
 	config.MaxConns = 25
 	config.MinConns = 5
 	config.MaxConnIdleTime = 15 * time.Minute

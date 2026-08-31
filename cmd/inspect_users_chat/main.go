@@ -25,28 +25,29 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 1. Inspect all users
-	rows, err := pool.Query(ctx, `SELECT id, name, language_pref, status, created_at FROM users ORDER BY created_at DESC LIMIT 20;`)
+	// 1. Inspect all listeners
+	lRows, err := pool.Query(ctx, `SELECT id, name, title, status, phone_hash, created_at FROM listeners ORDER BY created_at DESC LIMIT 20;`)
 	if err != nil {
 		log.Fatalf("Query failed: %v", err)
 	}
-	defer rows.Close()
+	defer lRows.Close()
 
-	fmt.Println("\n--- ALL USERS IN DB ---")
-	for rows.Next() {
-		var id, name, lang, status, created string
-		_ = rows.Scan(&id, &name, &lang, &status, &created)
-		fmt.Printf("User: ID=%s | Name=%s | Lang=%s | Status=%s | Created=%s\n", id, name, lang, status, created)
+	fmt.Println("\n--- ALL LISTENERS IN DB ---")
+	for lRows.Next() {
+		var id, name, title, status, phoneHash, created string
+		_ = lRows.Scan(&id, &name, &title, &status, &phoneHash, &created)
+		fmt.Printf("Listener: ID=%s | Name=%s | Title=%s | Status=%s\n", id, name, title, status)
 	}
 
 	// 2. Inspect all chat messages
 	msgRows, err := pool.Query(ctx, `
-		SELECT cm.id, cm.user_id, cm.listener_id, cm.sender_type, cm.content, cm.created_at, u.name as user_name, l.name as listener_name
+		SELECT cm.id, cm.user_id, cm.listener_id, cm.sender_type, cm.content, cm.created_at, 
+		       COALESCE(u.name, 'NULL_USER_NAME'), COALESCE(l.name, 'NULL_LISTENER_NAME')
 		FROM chat_messages cm
 		LEFT JOIN users u ON u.id = cm.user_id
 		LEFT JOIN listeners l ON l.id = cm.listener_id
 		ORDER BY cm.created_at DESC
-		LIMIT 10;
+		LIMIT 20;
 	`)
 	if err != nil {
 		log.Fatalf("Query failed: %v", err)
@@ -55,18 +56,8 @@ func main() {
 
 	fmt.Println("\n--- RECENT CHAT MESSAGES IN DB ---")
 	for msgRows.Next() {
-		var id, uid, lid, sender, content, created string
-		var uName, lName *string
+		var id, uid, lid, sender, content, created, uName, lName string
 		_ = msgRows.Scan(&id, &uid, &lid, &sender, &content, &created, &uName, &lName)
-		uN := "NULL"
-		if uName != nil {
-			uN = *uName
-		}
-		lN := "NULL"
-		if lName != nil {
-			lN = *lName
-		}
-		fmt.Printf("Msg: %s | User: %s (%s) -> Listener: %s (%s) | Sender: %s | Content: %s | Created: %s\n",
-			id, uN, uid, lN, lid, sender, content, created)
+		fmt.Printf("Msg: %s | User: %s (%s) -> Listener: %s (%s) | Sender: %s | Content: %s | Created: %s\n", id, uName, uid, lName, lid, sender, content, created)
 	}
 }

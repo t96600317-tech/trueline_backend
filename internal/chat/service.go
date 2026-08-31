@@ -124,7 +124,7 @@ func (s *ChatService) ListConversations(ctx context.Context, actorID uuid.UUID, 
 				COALESCE(uc.unread_count, 0) as unread_count,
 				COALESCE(mc.total_messages >= 4, false) OR COALESCE(cc.total_calls >= 2, false) as is_regular
 			FROM latest_messages lm
-			JOIN users u ON u.id = lm.user_id
+			LEFT JOIN users u ON u.id = lm.user_id
 			LEFT JOIN unread_counts uc ON uc.user_id = u.id
 			LEFT JOIN msg_counts mc ON mc.user_id = u.id
 			LEFT JOIN call_counts cc ON cc.user_id = u.id

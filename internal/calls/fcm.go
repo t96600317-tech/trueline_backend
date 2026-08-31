@@ -58,6 +58,9 @@ func EnsureUserAndroidFCMDeviceStore(ctx context.Context, pool *pgxpool.Pool) er
 		);
 		CREATE INDEX IF NOT EXISTS user_android_fcm_devices_user_id_idx
 			ON user_android_fcm_devices(user_id);
+		ALTER TABLE wallet_ledger DROP CONSTRAINT IF EXISTS wallet_ledger_type_check;
+		ALTER TABLE wallet_ledger ADD CONSTRAINT wallet_ledger_type_check 
+			CHECK (type IN ('recharge', 'call_debit', 'chat_debit', 'chat_message', 'refund', 'admin_adjustment'));
 	`)
 	if err != nil {
 		return fmt.Errorf("ensure User Android FCM device store: %w", err)
