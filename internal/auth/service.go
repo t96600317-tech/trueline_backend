@@ -105,9 +105,8 @@ func (s *AuthService) RequestOTP(ctx context.Context, phone, role string) (*OTPR
 	if role != "user" && role != "listener" {
 		return nil, errors.New("role must be either 'user' or 'listener'")
 	}
-	if s.widgetOTPVerifierFor(role) != nil || s.widgetAccessTokenVerifierFor(role) != nil {
-		return nil, errors.New("MSG91 widget OTP requests must be sent from the mobile app")
-	}
+	// If client requests OTP via backend (or falls back when client-side MSG91 fails),
+	// allow the backend to generate and dispatch the OTP.
 
 	otpCode := "123456"
 	if !s.cfg.OTPMockMode {
@@ -197,11 +196,10 @@ func (s *AuthService) VerifyOTP(ctx context.Context, phone, otpCode, role, reque
 		if err := verifier.VerifyAccessToken(ctx, accessToken, phone); err != nil {
 			return nil, err
 		}
-	} else if verifier := s.widgetAccessTokenVerifierFor(role); verifier != nil {
-		return nil, errors.New("MSG91 access token is required")
-	} else if verifier := s.widgetOTPVerifierFor(role); verifier != nil {
-		if requestID == "" {
-			return nil, errors.New("MSG91 request ID is required")
+	} else if requestID != "" {
+		verifier := s.widgetOTPVerifierFor(role)
+		if verifier == nil {
+			return nil, errors.New("MSG91 widget verification is not configured")
 		}
 		if otpCode == "" {
 			return nil, errors.New("OTP code is required")
