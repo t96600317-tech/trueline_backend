@@ -469,9 +469,9 @@ func (s *AdminService) ListPayoutRequests(ctx context.Context) ([]AdminPayoutIte
 	}
 
 	query := `
-		SELECT p.id, p.listener_id, l.name, p.amount_micros, p.tds_micros, p.net_amount_micros, p.upi_id, p.status, COALESCE(p.upi_ref, ''), p.requested_at, p.processed_at
+		SELECT p.id, p.listener_id, COALESCE(l.name, 'Listener'), p.amount_micros, p.tds_micros, p.net_amount_micros, p.upi_id, p.status, COALESCE(p.upi_ref, ''), p.requested_at, p.processed_at
 		FROM payout_requests p
-		JOIN listeners l ON l.id = p.listener_id
+		LEFT JOIN listeners l ON l.id = p.listener_id
 		ORDER BY p.requested_at DESC
 	`
 	rows, err := s.pool.Query(ctx, query)

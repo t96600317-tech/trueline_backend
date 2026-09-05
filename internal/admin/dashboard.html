@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TrueLine — Admin Console & Payouts Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0fdfa',
+                            100: '#ccfbf1',
+                            500: '#14b8a6',
+                            600: '#0d9488',
+                            800: '#115e59',
+                            900: '#134e4a',
+                            950: '#042f2e',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        .tab-active { border-bottom: 2px solid #0d9488; color: #0d9488; font-weight: 600; }
+        .tab-inactive { border-bottom: 2px solid transparent; color: #64748b; font-weight: 500; }
+        .tab-inactive:hover { color: #0f172a; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen">
+    <!-- Login Modal -->
+    <div id="loginModal" class="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 border border-slate-100">
+            <div class="flex items-center gap-3 mb-6">
+                <div class="w-10 h-10 rounded-xl bg-teal-800 text-white flex items-center justify-center font-bold text-xl">TL</div>
+                <div>
+                    <h2 class="text-xl font-bold text-slate-900">TrueLine Admin Console</h2>
+                    <p class="text-xs text-slate-500">Sign in to manage listener payouts & KYC</p>
+                </div>
+            </div>
+
+            <div id="loginError" class="hidden mb-4 p-3 rounded-lg bg-rose-50 text-rose-700 text-sm font-medium border border-rose-200"></div>
+
+            <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Admin Email</label>
+                    <input type="email" id="loginEmail" value="admin@trueline.internal" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Password</label>
+                    <input type="password" id="loginPassword" value="AdminPilot2026!" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-teal-600 focus:border-transparent">
+                </div>
+                <button type="submit" id="loginBtn" class="w-full py-3 px-4 bg-teal-700 hover:bg-teal-800 text-white font-semibold rounded-xl transition shadow-sm text-sm">
+                    Sign In to Console
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Main Navigation Bar -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex justify-between h-16">
+                <div class="flex items-center gap-4">
+                    <div class="flex items-center gap-2">
+                        <div class="w-9 h-9 rounded-xl bg-teal-800 text-white flex items-center justify-center font-bold text-base shadow-sm">TL</div>
+                        <div>
+                            <span class="font-extrabold text-lg text-slate-900 tracking-tight">TrueLine</span>
+                            <span class="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded bg-teal-50 text-teal-700 border border-teal-200/50 ml-1.5">Admin</span>
+                        </div>
+                    </div>
+
+                    <div class="h-6 w-px bg-slate-200 mx-1 hidden sm:block"></div>
+
+                    <!-- Navigation Tabs -->
+                    <nav class="flex space-x-6 text-sm">
+                        <button onclick="switchTab('payouts')" id="nav-payouts" class="tab-active py-5 px-1 flex items-center gap-2">
+                            <span>💸 Payout Requests</span>
+                            <span id="badgePendingPayouts" class="bg-amber-100 text-amber-800 text-xs font-bold px-2 py-0.5 rounded-full">0</span>
+                        </button>
+                        <button onclick="switchTab('kyc')" id="nav-kyc" class="tab-inactive py-5 px-1 flex items-center gap-2">
+                            <span>📋 KYC Queue</span>
+                            <span id="badgePendingKyc" class="bg-slate-100 text-slate-600 text-xs font-semibold px-2 py-0.5 rounded-full">0</span>
+                        </button>
+                        <button onclick="switchTab('listeners')" id="nav-listeners" class="tab-inactive py-5 px-1">
+                            🎧 Listeners
+                        </button>
+                        <button onclick="switchTab('users')" id="nav-users" class="tab-inactive py-5 px-1">
+                            👥 Users
+                        </button>
+                        <button onclick="switchTab('ledgers')" id="nav-ledgers" class="tab-inactive py-5 px-1">
+                            📊 Ledgers
+                        </button>
+                    </nav>
+                </div>
+
+                <!-- Right Header Actions -->
+                <div class="flex items-center gap-3">
+                    <button onclick="refreshCurrentTab()" class="p-2 text-slate-500 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition" title="Refresh Data">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                    </button>
+                    <div class="h-6 w-px bg-slate-200"></div>
+                    <span class="text-xs font-medium text-slate-500 hidden sm:inline" id="adminUserDisplay">admin@trueline.internal</span>
+                    <button onclick="logout()" class="text-xs font-semibold text-rose-600 hover:text-rose-800 px-3 py-1.5 rounded-lg border border-rose-200 hover:bg-rose-50 transition">
+                        Log Out
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- KPI Metric Cards -->
+    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-2">
+        <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <p class="text-xs font-medium text-slate-500">Pending Payouts</p>
+                <h3 id="statPendingPayouts" class="text-2xl font-bold text-amber-600 mt-1">0</h3>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <p class="text-xs font-medium text-slate-500">Pending KYC</p>
+                <h3 id="statPendingKyc" class="text-2xl font-bold text-blue-600 mt-1">0</h3>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <p class="text-xs font-medium text-slate-500">Online Listeners</p>
+                <h3 id="statOnlineListeners" class="text-2xl font-bold text-emerald-600 mt-1">0</h3>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <p class="text-xs font-medium text-slate-500">Active Calls</p>
+                <h3 id="statActiveCalls" class="text-2xl font-bold text-indigo-600 mt-1">0</h3>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <p class="text-xs font-medium text-slate-500">Total Recharge (INR)</p>
+                <h3 id="statTotalRecharge" class="text-2xl font-bold text-slate-900 mt-1">₹0</h3>
+            </div>
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <p class="text-xs font-medium text-slate-500">Listener Earnings</p>
+                <h3 id="statTotalEarned" class="text-2xl font-bold text-slate-900 mt-1">₹0</h3>
+            </div>
+        </div>
+    </section>
+
+    <!-- Toast Notification Banner -->
+    <div id="toast" class="fixed bottom-6 right-6 z-50 bg-slate-900 text-white px-5 py-3 rounded-xl shadow-2xl text-sm font-medium transition transform duration-300 translate-y-20 opacity-0 flex items-center gap-3">
+        <span id="toastMsg">Action completed successfully.</span>
+    </div>
+
+    <!-- Main Content Container -->
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+
+        <!-- TAB 1: PAYOUT REQUESTS -->
+        <div id="tab-content-payouts">
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div class="p-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                    <div>
+                        <h2 class="text-lg font-bold text-slate-900">Listener Payout Requests</h2>
+                        <p class="text-xs text-slate-500 mt-0.5">Approve and settle UPI earnings withdrawals requested by listeners</p>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <select id="payoutStatusFilter" onchange="filterPayouts()" class="text-xs font-medium px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700">
+                            <option value="ALL">All Statuses</option>
+                            <option value="pending" selected>Pending Only</option>
+                            <option value="paid">Paid</option>
+                            <option value="rejected">Rejected</option>
+                        </select>
+                        <button onclick="loadPayouts()" class="text-xs font-semibold px-3 py-2 bg-teal-50 text-teal-800 hover:bg-teal-100 rounded-lg border border-teal-200 transition">
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-slate-50 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="py-3.5 px-4">Requested At</th>
+                                <th class="py-3.5 px-4">Listener</th>
+                                <th class="py-3.5 px-4">Amount</th>
+                                <th class="py-3.5 px-4">TDS (10%)</th>
+                                <th class="py-3.5 px-4">Net Transfer</th>
+                                <th class="py-3.5 px-4">UPI ID</th>
+                                <th class="py-3.5 px-4">Status</th>
+                                <th class="py-3.5 px-4 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="payoutsTableBody" class="divide-y divide-slate-100 font-medium text-slate-700">
+                            <tr>
+                                <td colspan="8" class="text-center py-12 text-slate-400">Loading payout requests...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 2: KYC QUEUE -->
+        <div id="tab-content-kyc" class="hidden">
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div class="p-5 border-b border-slate-200">
+                    <h2 class="text-lg font-bold text-slate-900">Listener KYC Queue</h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Review identity documents and verify listener profiles</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-slate-50 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="py-3.5 px-4">Date</th>
+                                <th class="py-3.5 px-4">Listener</th>
+                                <th class="py-3.5 px-4">Doc Type</th>
+                                <th class="py-3.5 px-4">Provider Ref / UPI</th>
+                                <th class="py-3.5 px-4">Audio / Selfie</th>
+                                <th class="py-3.5 px-4">Status</th>
+                                <th class="py-3.5 px-4 text-right">Review Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="kycTableBody" class="divide-y divide-slate-100 font-medium text-slate-700">
+                            <tr>
+                                <td colspan="7" class="text-center py-12 text-slate-400">Loading KYC queue...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 3: LISTENERS -->
+        <div id="tab-content-listeners" class="hidden">
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div class="p-5 border-b border-slate-200">
+                    <h2 class="text-lg font-bold text-slate-900">All Registered Listeners</h2>
+                    <p class="text-xs text-slate-500 mt-0.5">View active listeners, status, availability, and onboarding stages</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-slate-50 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="py-3.5 px-4">Name</th>
+                                <th class="py-3.5 px-4">Title</th>
+                                <th class="py-3.5 px-4">Availability</th>
+                                <th class="py-3.5 px-4">KYC Status</th>
+                                <th class="py-3.5 px-4">Account Status</th>
+                                <th class="py-3.5 px-4">Rating</th>
+                                <th class="py-3.5 px-4 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="listenersTableBody" class="divide-y divide-slate-100 font-medium text-slate-700">
+                            <tr>
+                                <td colspan="7" class="text-center py-12 text-slate-400">Loading listeners...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 4: USERS -->
+        <div id="tab-content-users" class="hidden">
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div class="p-5 border-b border-slate-200">
+                    <h2 class="text-lg font-bold text-slate-900">Registered Users</h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Customer accounts and their active coin balances</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-slate-50 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="py-3.5 px-4">User ID</th>
+                                <th class="py-3.5 px-4">Masked Phone</th>
+                                <th class="py-3.5 px-4">Language</th>
+                                <th class="py-3.5 px-4">Wallet Balance</th>
+                                <th class="py-3.5 px-4">Created At</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody" class="divide-y divide-slate-100 font-medium text-slate-700">
+                            <tr>
+                                <td colspan="5" class="text-center py-12 text-slate-400">Loading users...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB 5: LEDGERS -->
+        <div id="tab-content-ledgers" class="hidden">
+            <div class="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+                <div class="p-5 border-b border-slate-200">
+                    <h2 class="text-lg font-bold text-slate-900">Financial Audit Ledger</h2>
+                    <p class="text-xs text-slate-500 mt-0.5">Real-time immutable ledger entries for calls, recharges, and payouts</p>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead class="bg-slate-50 text-slate-500 uppercase text-[11px] font-semibold border-b border-slate-200">
+                            <tr>
+                                <th class="py-3.5 px-4">Date</th>
+                                <th class="py-3.5 px-4">Account</th>
+                                <th class="py-3.5 px-4">Type</th>
+                                <th class="py-3.5 px-4">Amount</th>
+                                <th class="py-3.5 px-4">Balance After</th>
+                                <th class="py-3.5 px-4">Reference</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ledgersTableBody" class="divide-y divide-slate-100 font-medium text-slate-700">
+                            <tr>
+                                <td colspan="6" class="text-center py-12 text-slate-400">Loading ledger entries...</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let allPayouts = [];
+        let currentTab = 'payouts';
+
+        function getAuthToken() {
+            return localStorage.getItem('trueline_admin_token') || '';
+        }
+
+        function setAuthToken(t) {
+            localStorage.setItem('trueline_admin_token', t);
+        }
+
+        function showToast(msg) {
+            const el = document.getElementById('toast');
+            document.getElementById('toastMsg').innerText = msg;
+            el.classList.remove('translate-y-20', 'opacity-0');
+            setTimeout(() => {
+                el.classList.add('translate-y-20', 'opacity-0');
+            }, 3500);
+        }
+
+        async function apiFetch(endpoint, options = {}) {
+            const token = getAuthToken();
+            const headers = options.headers || {};
+            if (token) {
+                headers['Authorization'] = 'Bearer ' + token;
+            }
+            if (options.body && typeof options.body === 'object') {
+                headers['Content-Type'] = 'application/json';
+                options.body = JSON.stringify(options.body);
+            }
+            options.headers = headers;
+            const res = await fetch('/api/v1' + endpoint, options);
+            if (res.status === 401) {
+                document.getElementById('loginModal').classList.remove('hidden');
+                throw new Error('Authentication required');
+            }
+            return await res.json();
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const email = document.getElementById('loginEmail').value.trim();
+            const password = document.getElementById('loginPassword').value.trim();
+            const errEl = document.getElementById('loginError');
+            errEl.classList.add('hidden');
+
+            try {
+                const res = await fetch('/api/v1/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+                const data = await res.json();
+                if (data.success && data.data && data.data.token) {
+                    setAuthToken(data.data.token);
+                    document.getElementById('loginModal').classList.add('hidden');
+                    showToast('Logged in successfully!');
+                    loadStats();
+                    loadCurrentTab();
+                } else {
+                    errEl.innerText = data.error?.message || 'Login failed';
+                    errEl.classList.remove('hidden');
+                }
+            } catch (err) {
+                errEl.innerText = 'Network error: ' + err.message;
+                errEl.classList.remove('hidden');
+            }
+        }
+
+        function logout() {
+            localStorage.removeItem('trueline_admin_token');
+            document.getElementById('loginModal').classList.remove('hidden');
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            ['payouts', 'kyc', 'listeners', 'users', 'ledgers'].forEach(t => {
+                const navBtn = document.getElementById('nav-' + t);
+                const content = document.getElementById('tab-content-' + t);
+                if (t === tab) {
+                    navBtn.className = 'tab-active py-5 px-1 flex items-center gap-2';
+                    content.classList.remove('hidden');
+                } else {
+                    navBtn.className = 'tab-inactive py-5 px-1 flex items-center gap-2';
+                    content.classList.add('hidden');
+                }
+            });
+            loadCurrentTab();
+        }
+
+        function loadCurrentTab() {
+            if (currentTab === 'payouts') loadPayouts();
+            else if (currentTab === 'kyc') loadKYC();
+            else if (currentTab === 'listeners') loadListeners();
+            else if (currentTab === 'users') loadUsers();
+            else if (currentTab === 'ledgers') loadLedgers();
+        }
+
+        function refreshCurrentTab() {
+            loadStats();
+            loadCurrentTab();
+            showToast('Refreshed data');
+        }
+
+        async function loadStats() {
+            try {
+                const res = await apiFetch('/admin/stats');
+                if (res.success && res.data) {
+                    const d = res.data;
+                    document.getElementById('statPendingPayouts').innerText = d.pending_payouts_count || 0;
+                    document.getElementById('badgePendingPayouts').innerText = d.pending_payouts_count || 0;
+                    document.getElementById('statPendingKyc').innerText = d.pending_kyc_count || 0;
+                    document.getElementById('badgePendingKyc').innerText = d.pending_kyc_count || 0;
+                    document.getElementById('statOnlineListeners').innerText = d.online_listeners_count || 0;
+                    document.getElementById('statActiveCalls').innerText = d.active_calls_count || 0;
+                    document.getElementById('statTotalRecharge').innerText = '₹' + (d.total_recharge_inr || 0).toLocaleString();
+                    document.getElementById('statTotalEarned').innerText = '₹' + (d.total_earned_coins || 0).toLocaleString();
+                }
+            } catch (e) {}
+        }
+
+        // PAYOUTS HANDLING
+        async function loadPayouts() {
+            const body = document.getElementById('payoutsTableBody');
+            body.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-slate-400">Loading payout requests...</td></tr>';
+            try {
+                const res = await apiFetch('/admin/payouts');
+                if (res.success && res.data) {
+                    allPayouts = res.data;
+                    filterPayouts();
+                } else {
+                    body.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-rose-500">Failed to load payouts</td></tr>';
+                }
+            } catch (e) {
+                body.innerHTML = '<tr><td colspan="8" class="text-center py-8 text-slate-400">Sign in to view payouts</td></tr>';
+            }
+        }
+
+        function filterPayouts() {
+            const status = document.getElementById('payoutStatusFilter').value;
+            const body = document.getElementById('payoutsTableBody');
+            const filtered = (status === 'ALL') ? allPayouts : allPayouts.filter(p => p.status.toLowerCase() === status.toLowerCase());
+
+            if (filtered.length === 0) {
+                body.innerHTML = '<tr><td colspan="8" class="text-center py-12 text-slate-400">No payout requests found</td></tr>';
+                return;
+            }
+
+            body.innerHTML = filtered.map(p => {
+                const isPending = p.status.toLowerCase() === 'pending';
+                const statusBadge = isPending 
+                    ? '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800 animate-pulse">PENDING</span>'
+                    : (p.status.toLowerCase() === 'paid' || p.status.toLowerCase() === 'approved'
+                        ? '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-800">PAID</span>'
+                        : '<span class="px-2.5 py-1 rounded-full text-xs font-bold bg-rose-100 text-rose-800">REJECTED</span>');
+
+                const actions = isPending ? `
+                    <div class="flex items-center justify-end gap-2">
+                        <button onclick="processPayout('${p.id}', true)" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold transition shadow-xs">
+                            ✓ Approve & Pay
+                        </button>
+                        <button onclick="processPayout('${p.id}', false)" class="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-rose-50 text-slate-600 hover:text-rose-700 text-xs font-semibold border border-slate-200 transition">
+                            Reject
+                        </button>
+                    </div>
+                ` : `<span class="text-xs text-slate-400">${p.upi_ref || 'Processed'}</span>`;
+
+                const dateStr = p.requested_at ? new Date(p.requested_at).toLocaleString() : 'Just now';
+
+                return `
+                    <tr class="hover:bg-slate-50/80 transition">
+                        <td class="py-4 px-4 text-xs text-slate-500 whitespace-nowrap">${dateStr}</td>
+                        <td class="py-4 px-4 font-semibold text-slate-900">${escapeHtml(p.listener_name || 'Listener')}</td>
+                        <td class="py-4 px-4 font-bold text-slate-900">₹${p.amount_inr.toFixed(2)}</td>
+                        <td class="py-4 px-4 text-xs text-slate-500">₹${p.tds_inr.toFixed(2)}</td>
+                        <td class="py-4 px-4 font-extrabold text-emerald-700">₹${p.net_inr.toFixed(2)}</td>
+                        <td class="py-4 px-4 font-mono text-xs text-slate-700">${escapeHtml(p.upi_id)}</td>
+                        <td class="py-4 px-4">${statusBadge}</td>
+                        <td class="py-4 px-4 text-right">${actions}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        async function processPayout(payoutId, approve) {
+            const actionText = approve ? 'APPROVE and PAY' : 'REJECT';
+            if (!confirm(`Are you sure you want to ${actionText} this payout request?`)) return;
+
+            try {
+                const res = await apiFetch(`/admin/payouts/${payoutId}/process`, {
+                    method: 'POST',
+                    body: { approve }
+                });
+                if (res.success) {
+                    showToast(approve ? 'Payout approved & processed!' : 'Payout request rejected.');
+                    loadStats();
+                    loadPayouts();
+                } else {
+                    alert(res.error?.message || 'Failed to process payout');
+                }
+            } catch (err) {
+                alert('Error processing payout: ' + err.message);
+            }
+        }
+
+        // KYC HANDLING
+        async function loadKYC() {
+            const body = document.getElementById('kycTableBody');
+            body.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-slate-400">Loading KYC queue...</td></tr>';
+            try {
+                const res = await apiFetch('/admin/kyc/queue');
+                if (res.success && res.data) {
+                    const queue = res.data;
+                    if (queue.length === 0) {
+                        body.innerHTML = '<tr><td colspan="7" class="text-center py-12 text-slate-400">No pending KYC submissions</td></tr>';
+                        return;
+                    }
+                    body.innerHTML = queue.map(k => `
+                        <tr class="hover:bg-slate-50/80 transition">
+                            <td class="py-4 px-4 text-xs text-slate-500 whitespace-nowrap">${new Date(k.created_at).toLocaleDateString()}</td>
+                            <td class="py-4 px-4 font-semibold text-slate-900">${escapeHtml(k.listener_name)} <span class="text-xs text-slate-400 block">${k.phone || ''}</span></td>
+                            <td class="py-4 px-4 uppercase text-xs font-bold text-slate-600">${escapeHtml(k.document_type)}</td>
+                            <td class="py-4 px-4 font-mono text-xs text-slate-700">${escapeHtml(k.provider_ref || 'N/A')}</td>
+                            <td class="py-4 px-4">
+                                ${k.avatar_url ? `<img src="${k.avatar_url}" class="w-8 h-8 rounded-full object-cover inline-block mr-1">` : ''}
+                                ${k.audio_sample_url ? `<audio controls src="${k.audio_sample_url}" class="h-6 w-32 inline-block"></audio>` : '<span class="text-xs text-slate-400">No audio</span>'}
+                            </td>
+                            <td class="py-4 px-4"><span class="px-2.5 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-800">${escapeHtml(k.status)}</span></td>
+                            <td class="py-4 px-4 text-right">
+                                <div class="flex items-center justify-end gap-2">
+                                    <button onclick="reviewKYC('${k.id}', 'approved')" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold">Approve</button>
+                                    <button onclick="reviewKYC('${k.id}', 'rejected')" class="px-3 py-1.5 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-semibold border border-rose-200">Reject</button>
+                                </div>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {}
+        }
+
+        async function reviewKYC(kycId, status) {
+            if (!confirm(`Are you sure you want to mark this KYC as ${status}?`)) return;
+            try {
+                const res = await apiFetch(`/admin/kyc/${kycId}/review`, {
+                    method: 'POST',
+                    body: { status, reason: status === 'approved' ? 'Verified by Admin' : 'Incomplete documentation' }
+                });
+                if (res.success) {
+                    showToast('KYC ' + status);
+                    loadStats();
+                    loadKYC();
+                } else {
+                    alert(res.error?.message || 'Failed to review KYC');
+                }
+            } catch (e) {
+                alert('Error reviewing KYC: ' + e.message);
+            }
+        }
+
+        // LISTENERS HANDLING
+        async function loadListeners() {
+            const body = document.getElementById('listenersTableBody');
+            body.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-slate-400">Loading listeners...</td></tr>';
+            try {
+                const res = await apiFetch('/admin/listeners');
+                if (res.success && res.data) {
+                    body.innerHTML = res.data.map(l => `
+                        <tr class="hover:bg-slate-50/80 transition">
+                            <td class="py-4 px-4 font-semibold text-slate-900">${escapeHtml(l.name || 'Unnamed')}</td>
+                            <td class="py-4 px-4 text-xs text-slate-500">${escapeHtml(l.title || 'Calm Friend')}</td>
+                            <td class="py-4 px-4"><span class="px-2 py-0.5 rounded text-xs font-bold ${l.availability === 'online' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-500'}">${l.availability}</span></td>
+                            <td class="py-4 px-4"><span class="px-2 py-0.5 rounded text-xs font-bold ${l.kyc_status === 'approved' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}">${l.kyc_status}</span></td>
+                            <td class="py-4 px-4"><span class="px-2 py-0.5 rounded text-xs font-bold ${l.status === 'active' ? 'text-emerald-700 bg-emerald-50' : 'text-rose-700 bg-rose-50'}">${l.status}</span></td>
+                            <td class="py-4 px-4 text-xs font-bold text-slate-700">★ ${l.rating_avg.toFixed(1)} (${l.rating_count})</td>
+                            <td class="py-4 px-4 text-right">
+                                <button onclick="toggleListenerStatus('${l.id}', '${l.status === 'active' ? 'blocked' : 'active'}')" class="text-xs font-semibold px-2.5 py-1 rounded border ${l.status === 'active' ? 'text-rose-700 border-rose-200 hover:bg-rose-50' : 'text-emerald-700 border-emerald-200 hover:bg-emerald-50'}">
+                                    ${l.status === 'active' ? 'Block' : 'Unblock'}
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {}
+        }
+
+        async function toggleListenerStatus(id, newStatus) {
+            try {
+                const res = await apiFetch(`/admin/listeners/${id}/status`, {
+                    method: 'POST',
+                    body: { status: newStatus }
+                });
+                if (res.success) {
+                    showToast('Listener status updated to ' + newStatus);
+                    loadListeners();
+                }
+            } catch (e) {}
+        }
+
+        // USERS HANDLING
+        async function loadUsers() {
+            const body = document.getElementById('usersTableBody');
+            body.innerHTML = '<tr><td colspan="5" class="text-center py-8 text-slate-400">Loading users...</td></tr>';
+            try {
+                const res = await apiFetch('/admin/users');
+                if (res.success && res.data) {
+                    body.innerHTML = res.data.map(u => `
+                        <tr class="hover:bg-slate-50/80 transition">
+                            <td class="py-4 px-4 font-mono text-xs text-slate-600">${u.id}</td>
+                            <td class="py-4 px-4 font-medium text-slate-900">${escapeHtml(u.phone_masked)}</td>
+                            <td class="py-4 px-4 text-xs uppercase font-bold text-slate-500">${escapeHtml(u.language)}</td>
+                            <td class="py-4 px-4 font-bold text-emerald-700">${u.wallet_balance_coins.toFixed(1)} coins</td>
+                            <td class="py-4 px-4 text-xs text-slate-500 whitespace-nowrap">${new Date(u.created_at).toLocaleDateString()}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {}
+        }
+
+        // LEDGERS HANDLING
+        async function loadLedgers() {
+            const body = document.getElementById('ledgersTableBody');
+            body.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-slate-400">Loading ledgers...</td></tr>';
+            try {
+                const res = await apiFetch('/admin/ledgers');
+                if (res.success && res.data) {
+                    body.innerHTML = res.data.map(l => `
+                        <tr class="hover:bg-slate-50/80 transition">
+                            <td class="py-4 px-4 text-xs text-slate-500 whitespace-nowrap">${new Date(l.created_at).toLocaleString()}</td>
+                            <td class="py-4 px-4 font-mono text-xs text-slate-600">${escapeHtml(l.account_type)}</td>
+                            <td class="py-4 px-4 text-xs font-bold uppercase text-slate-700">${escapeHtml(l.type)}</td>
+                            <td class="py-4 px-4 font-bold ${l.amount_coins >= 0 ? 'text-emerald-700' : 'text-rose-700'}">${l.amount_coins >= 0 ? '+' : ''}${l.amount_coins.toFixed(2)}</td>
+                            <td class="py-4 px-4 font-semibold text-slate-900">${l.balance_after_coins.toFixed(2)}</td>
+                            <td class="py-4 px-4 text-xs text-slate-500 font-mono">${escapeHtml(l.reference_id)}</td>
+                        </tr>
+                    `).join('');
+                }
+            } catch (e) {}
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', () => {
+            if (!getAuthToken()) {
+                document.getElementById('loginModal').classList.remove('hidden');
+            } else {
+                loadStats();
+                loadCurrentTab();
+            }
+
+            // Auto-refresh every 12 seconds
+            setInterval(() => {
+                if (getAuthToken() && !document.hidden) {
+                    loadStats();
+                    if (currentTab === 'payouts') loadPayouts();
+                }
+            }, 12000);
+        });
+    </script>
+</body>
+</html>

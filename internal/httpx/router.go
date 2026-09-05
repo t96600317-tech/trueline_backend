@@ -96,6 +96,8 @@ func NewRouter(
 	mux.HandleFunc("GET /api/v1/calls/{id}/events", callHandler.HandleCallEventsWS)
 
 	// 6. Admin Endpoints
+	mux.HandleFunc("GET /admin", adminHandler.ServeDashboard)
+	mux.HandleFunc("GET /admin/", adminHandler.ServeDashboard)
 	mux.HandleFunc("POST /api/v1/admin/login", adminHandler.Login)
 	mux.HandleFunc("GET /api/v1/admin/stats", Chain(adminHandler.GetStats, authMiddleware, adminRoleMiddleware))
 	mux.HandleFunc("GET /api/v1/admin/kyc/queue", Chain(adminHandler.ListKYCQueue, authMiddleware, adminRoleMiddleware))
